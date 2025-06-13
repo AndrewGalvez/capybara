@@ -5,9 +5,10 @@
 #include <iostream>
 #include <list>
 #include <map>
+#include <math.h>
 #include <mutex>
 #include <netinet/in.h>
-#include <raylib.h>
+#include <random>
 #include <sstream>
 #include <string>
 #include <sys/socket.h>
@@ -15,6 +16,12 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <utility>
+
+float Vector2Distance(Vector2 a, Vector2 b) {
+    float dx = a.x - b.x;
+    float dy = a.y - b.y;
+    return sqrtf(dx * dx + dy * dy);
+}
 
 std::mutex players_mutex;
 std::map<int, Player> players;
@@ -28,12 +35,65 @@ std::map<int, std::pair<int, std::thread>> clients;
 std::mutex running_mutex;
 std::map<int, bool> is_running;
 
+Vector2 random_spawn_position(bool already_locked = false) {
+  const int MAX_ATTEMPTS = 20;  // attempts to find a good position
+  const int MIN_DISTANCE = 100; // minimum distance between players
+  const int MARGIN = 50;  // keep players away from world edges
+  const int WORLD_WIDTH = 2000;  // fixed world size
+  const int WORLD_HEIGHT = 2000;
+  
+  static std::random_device rd;
+  static std::mt19937 gen(rd());
+  static std::uniform_real_distribution<float> x_dist(MARGIN, WORLD_WIDTH - MARGIN);
+  static std::uniform_real_distribution<float> y_dist(MARGIN, WORLD_HEIGHT - MARGIN);
+  
+  if (!already_locked) {
+    std::cout << "Attempting to get lock..." << std::endl;
+    std::unique_lock<std::mutex> lock(players_mutex, std::try_to_lock);
+    if (!lock.owns_lock()) {
+      std::cout << "Failed to get lock" << std::endl;
+      return Vector2{(float)WORLD_WIDTH/2, (float)WORLD_HEIGHT/2};
+    }
+    std::cout << "Got lock, checking players..." << std::endl;
+  }
+  
+  std::cout << "players.empty() = " << players.empty() << std::endl;
+  
+  if (players.empty()) {
+    std::cout << "No players, returning random position" << std::endl;
+    return Vector2{x_dist(gen), y_dist(gen)};
+  }
+  
+  for (int i = 0; i < MAX_ATTEMPTS; i++) {
+    float x = x_dist(gen);
+    float y = y_dist(gen);
+    bool too_close = false;
+    
+    for (const auto &[_, v] : players) {
+      if (Vector2Distance(Vector2{x, y}, Vector2{(float)v.x, (float)v.y}) < MIN_DISTANCE) {
+        too_close = true;
+        break;
+      }
+    }
+    
+    if (!too_close) {
+      std::cout << "Found good position" << std::endl;
+      return Vector2{x, y};
+    }
+  }
+  
+  std::cout << "No good position found, using center" << std::endl;
+  return Vector2{(float)WORLD_WIDTH/2, (float)WORLD_HEIGHT/2};
+}
+
 void handle_client(int client, int id) {
   {
     // default values...
     {
       std::lock_guard<std::mutex> lock(players_mutex);
-      Player p(100, 100);
+      Vector2 spawn_pos = random_spawn_position(true);  // Pass true to indicate mutex is already locked
+      std::cout << "Spawning player " << id << " at " << spawn_pos.x << ", " << spawn_pos.y << std::endl;
+      Player p(spawn_pos.x, spawn_pos.y);
       p.username = "unset";
       p.color = RED;
       players.insert({id, p});
@@ -42,8 +102,7 @@ void handle_client(int client, int id) {
     std::ostringstream out;
     {
       std::lock_guard<std::mutex> lock(players_mutex);
-
-      for (auto &[k, v] : players) {
+      for (const auto &[k, v] : players) {
         // sanitize 
         std::string safe_username = v.username;
         if (safe_username.empty()) safe_username = "unset";
@@ -52,33 +111,29 @@ void handle_client(int client, int id) {
           if (c == ';' || c == ':' || c == ' ') c = '_';
         }
         // sanitize color
-        uint col = color_to_uint(v.color);
+        unsigned int col = color_to_uint(v.color);
         if (col > 4) col = 1;
         out << ':' << k << ' ' << v.x << ' ' << v.y << ' ' << safe_username << ' ' << col;
       }
       std::cout << out.str() << std::endl;
     }
     
-    // unlock mutex
     std::string payload = out.str();
-
     std::string msg = "0\n" + payload;
-
     send_message(msg, client);
   }
+  
   sleep(3);
 
   std::string msg_id = "1\n" + std::to_string(id);
-
   send_message(msg_id, client);
 
   std::ostringstream out;
-
   out << "3\n"
       << id << " " << players.at(id).x << " " << players.at(id).y << " "
       << players.at(id).username << " " << color_to_uint(players.at(id).color);
 
-  for (auto &pair : clients) {
+  for (const auto &pair : clients) {
     if (pair.first != id) {
       send_message(out.str(), pair.second.first);
     }
@@ -92,11 +147,11 @@ void handle_client(int client, int id) {
 
   while (running) {
     char buffer[1024];
-
     int received = recv(client, buffer, sizeof(buffer), 0);
 
     if (received <= 0)
       break;
+      
     {
       std::lock_guard<std::mutex> _(running_mutex);
       running = is_running[id];
