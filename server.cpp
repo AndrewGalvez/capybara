@@ -120,12 +120,14 @@ void handle_client(int client, int id) {
     
     std::string payload = out.str();
     std::string msg = "0\n" + payload;
+    std::cout << "Sending player list: " << msg << std::endl;
     send_message(msg, client);
   }
   
   sleep(3);
 
   std::string msg_id = "1\n" + std::to_string(id);
+  std::cout << "Sending ID: " << msg_id << std::endl;
   send_message(msg_id, client);
 
   std::ostringstream out;

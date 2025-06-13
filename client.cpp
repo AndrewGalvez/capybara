@@ -7,6 +7,7 @@
 #include <arpa/inet.h>
 #include <atomic>
 #include <cstdio>
+#include <cstring>
 #include <iostream>
 #include <list>
 #include <map>
@@ -18,8 +19,8 @@
 #include <thread>
 #include <unistd.h>
 #include <vector>
-
-int sock = socket(AF_INET, SOCK_STREAM, 0);
+#include <fcntl.h>
+#include <sys/select.h>
 
 std::mutex packets_mutex;
 std::list<std::string> packets = {};
@@ -27,27 +28,37 @@ std::vector<Bullet> bullets;
 
 std::atomic<bool> running = true;
 
-void do_recv() {
+void do_recv(int sock) {
   char buffer[1024];
+  std::cout << "Starting receive thread" << std::endl;
 
   while (running) {
     int bytes = recv(sock, &buffer, sizeof(buffer), 0);
 
     if (bytes == 0) {
-      std::cout << "Server disconnected.\n";
+      std::cout << "Server disconnected gracefully." << std::endl;
       running = false;
       break;
     } else if (bytes < 0) {
-      perror("Error receiving packet");
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        // No data available, continue
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        continue;
+      }
+      std::cerr << "Error receiving packet: " << strerror(errno) << std::endl;
       running = false;
       break;
     }
 
     std::lock_guard<std::mutex> lock(packets_mutex);
     std::string packet(buffer, bytes);
-
+    int packet_type = std::stoi(packet.substr(0, packet.find('\n')));
+    if (packet_type != 2) {  // Don't print movement packets
+      std::cout << "Received packet: " << packet.substr(0, packet.find('\n')) << std::endl;
+    }
     packets.push_back(packet);
   }
+  std::cout << "Receive thread ending" << std::endl;
 }
 
 void handle_packet(int packet_type, std::string payload,
@@ -55,8 +66,8 @@ void handle_packet(int packet_type, std::string payload,
   std::istringstream in(payload);
   std::vector<std::string> msg_split;
 
-  if (packet_type != 2) {
-    std::cout << payload << std::endl;
+  if (packet_type != 2) {  // Don't print movement packets
+    std::cout << "Received packet type " << packet_type << ": " << payload << std::endl;
   }
 
   switch (packet_type) {
@@ -107,7 +118,10 @@ void handle_packet(int packet_type, std::string payload,
     break;
 
   case 1:
-    in >> *my_id;
+    if (*my_id == -1) {  // Only process ID assignment if we haven't received one yet
+      in >> *my_id;
+      std::cout << "Assigned ID: " << *my_id << std::endl;
+    }
     break;
   case 2: {
     std::istringstream i(payload);
@@ -120,7 +134,6 @@ void handle_packet(int packet_type, std::string payload,
       (*players).at(id).ny = y;
       (*players).at(id).rot = rot;
     }
-
   } break;
   case 3:
     split(payload, " ", msg_split);
@@ -170,22 +183,24 @@ void handle_packet(int packet_type, std::string payload,
 
 void handle_packets(std::map<int, Player> *players, int *my_id) {
   std::lock_guard<std::mutex> lock(packets_mutex);
-  while (!packets.empty()) {
-    std::string packet = packets.front();
+  if (!packets.empty()) {
+    while (!packets.empty()) {
+      std::string packet = packets.front();
 
-    int packet_type = std::stoi(packet.substr(0, packet.find('\n')));
-    std::string payload =
-        packet.substr(packet.find('\n') + 1, packet.find_first_of(';') - 2);
+      int packet_type = std::stoi(packet.substr(0, packet.find('\n')));
+      std::string payload =
+          packet.substr(packet.find('\n') + 1, packet.find_first_of(';') - 2);
 
-    handle_packet(packet_type, payload, players, my_id);
+      handle_packet(packet_type, payload, players, my_id);
 
-    packets.pop_front();
+      packets.pop_front();
+    }
   }
 }
 
 void do_username_prompt(std::string *usernameprompt, bool *usernamechosen,
                         std::map<int, Player> *players, int my_id, int *mycolor,
-                        Color options[5]) {
+                        Color options[5], int sock) {
   BeginDrawing();
   ClearBackground(BLACK);
   DrawText("Pick a username", 50, 50, 64, WHITE);
@@ -331,11 +346,17 @@ int main(int argc, char* argv[]) {
     }
   }
 
+  std::cout << "Connecting to " << server_addr << ":" << server_port << std::endl;
+
   int sock = socket(AF_INET, SOCK_STREAM, 0);
   if (sock < 0) {
     perror("Could not create socket :(");
     return -1;
   }
+
+  // Set socket to non-blocking mode
+  int flags = fcntl(sock, F_GETFL, 0);
+  fcntl(sock, F_SETFL, flags | O_NONBLOCK);
 
   sockaddr_in sock_addr;
   sock_addr.sin_family = AF_INET;
@@ -343,22 +364,69 @@ int main(int argc, char* argv[]) {
   sock_addr.sin_addr.s_addr = inet_addr(server_addr.c_str());
 
   if (connect(sock, (struct sockaddr *)&sock_addr, sizeof(sock_addr)) < 0) {
-    perror("Could not connect to server");
+    if (errno != EINPROGRESS) {
+      perror("Could not connect to server");
+      close(sock);
+      return -1;
+    }
+  }
+
+  // Wait for connection to complete
+  fd_set write_fds;
+  FD_ZERO(&write_fds);
+  FD_SET(sock, &write_fds);
+  struct timeval timeout;
+  timeout.tv_sec = 5;
+  timeout.tv_usec = 0;
+
+  int ret = select(sock + 1, NULL, &write_fds, NULL, &timeout);
+  if (ret <= 0) {
+    std::cerr << "Connection timeout" << std::endl;
     close(sock);
     return -1;
   }
 
-  std::thread recv_thread(do_recv);
+  int error = 0;
+  socklen_t len = sizeof(error);
+  if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &error, &len) < 0 || error != 0) {
+    std::cerr << "Connection failed: " << strerror(error) << std::endl;
+    close(sock);
+    return -1;
+  }
 
+  std::cout << "Connected to server successfully" << std::endl;
+
+  std::thread recv_thread(do_recv, sock);
+
+  std::cout << "Initializing window..." << std::endl;
   InitWindow(800, 600, "Multi Ludens");
+  if (!IsWindowReady()) {
+    std::cerr << "Failed to initialize window" << std::endl;
+    running = false;
+    recv_thread.join();
+    close(sock);
+    return -1;
+  }
+  std::cout << "Window initialized successfully" << std::endl;
 
   SetTargetFPS(60);
 
+  std::cout << "Loading textures..." << std::endl;
   Image floorImage = LoadImage("floor_tile.png");
+  if (floorImage.data == NULL) {
+    std::cerr << "Failed to load floor image" << std::endl;
+    running = false;
+    recv_thread.join();
+    close(sock);
+    return -1;
+  }
+  std::cout << "Floor texture loaded" << std::endl;
+
   ImageResizeNN(&floorImage, 100, 100);
   Texture2D floorTexture = LoadTextureFromImage(floorImage);
   std::map<int, Player> players;
 
+  std::cout << "Loading player textures..." << std::endl;
   std::map<Color, Texture2D, ColorCompare> player_textures;
   player_textures[RED] = LoadTexture("player_red.png");
   player_textures[GREEN] = LoadTexture("player_green.png");
@@ -371,6 +439,7 @@ int main(int argc, char* argv[]) {
     ImageResizeNN(&a, 100, 100);
     v = LoadTextureFromImage(a);
   }
+  std::cout << "Player textures loaded" << std::endl;
 
   int my_id = -1;
   int server_update_counter = 0;
@@ -389,7 +458,13 @@ int main(int argc, char* argv[]) {
   cam.rotation = 0.0f;
   cam.offset = {0.0f, 0.0f};
 
+  std::cout << "Starting game loop" << std::endl;
+
   while (!WindowShouldClose() && running) {
+    if (IsKeyPressed(KEY_ESCAPE)) {
+      std::cout << "Escape key pressed, closing window" << std::endl;
+      break;
+    }
     int cx = players[my_id].x;
     int cy = players[my_id].y;
 
@@ -408,12 +483,12 @@ int main(int argc, char* argv[]) {
 
     if (!usernamechosen) {
       do_username_prompt(&usernameprompt, &usernamechosen, &players, my_id,
-                         &colorindex, options);
+                         &colorindex, options, sock);
       continue;
     }
 
     if (mycolor.r == 0 && mycolor.g == 0 && mycolor.b == 0) {
-      std::cout << colorindex << std::endl;
+      std::cout << "Setting color index: " << colorindex << std::endl;
       mycolor = options[colorindex];
       players[my_id].color = mycolor;
     }
@@ -421,7 +496,7 @@ int main(int argc, char* argv[]) {
     server_update_counter++;
 
     bool moved = players.at(my_id).move();
-    bool moved_gun = move_gun(&players[my_id].rot, cx, cy);
+    bool moved_gun = move_gun(&players.at(my_id).rot, cx, cy);
 
     hasmoved = moved || moved_gun;
 
@@ -431,7 +506,6 @@ int main(int argc, char* argv[]) {
                       std::to_string(players.at(my_id).y) + " " +
                       std::to_string(players.at(my_id).rot));
       send_message(msg, sock);
-
       server_update_counter = 0;
     }
 
@@ -450,8 +524,8 @@ int main(int argc, char* argv[]) {
       canshoot = false;
       bdelay = 20;
       float bspeed = 10;
-      float angleRad = (-players[my_id].rot + 5) * DEG2RAD; // 5 degrees offset to account for the gun's position
-      Vector2 dir = Vector2Scale({cosf(angleRad), -sinf(angleRad)}, -bspeed); // degrees in radians, straight up is 0 degrees
+      float angleRad = (-players[my_id].rot + 5) * DEG2RAD;
+      Vector2 dir = Vector2Scale({cosf(angleRad), -sinf(angleRad)}, -bspeed);
       Vector2 spawnOffset =
           Vector2Scale({cosf(angleRad), -sinf(angleRad)}, -120);
       Vector2 origin = {(float)players[my_id].x + 50,
@@ -461,10 +535,8 @@ int main(int argc, char* argv[]) {
 
       send_message(
           std::string("10\n ").append(std::to_string(players[my_id].rot)),
-          sock); // shooting straight up would be this message: 10\n<from_id> 0
+          sock);
     }
-
-    // ------------------------------------------------------------------------------
 
     float dt = GetFrameTime();
 
@@ -496,7 +568,8 @@ int main(int argc, char* argv[]) {
     EndDrawing();
   }
 
-  std::cout << "Closing.\n";
+  std::cout << "Game loop ended" << std::endl;
+  std::cout << "Closing." << std::endl;
 
   running = false;
 
@@ -506,4 +579,5 @@ int main(int argc, char* argv[]) {
   recv_thread.join();
 
   CloseWindow();
+  return 0;
 }
