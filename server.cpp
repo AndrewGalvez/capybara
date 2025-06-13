@@ -175,7 +175,7 @@ int main() {
   std::cout << "Running.\n";
 
   // handle game stuff
-  while (1) {
+  while (1)  { // loop until stop
     {
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
       std::lock_guard<std::mutex> lo(running_mutex);
@@ -281,6 +281,20 @@ int main() {
                          v.first);
           }
         } break;
+
+        case 10: {
+          // bullet, 10\n<from_id> <rot>
+          std::lock_guard<std::mutex> lock(players_mutex);
+          std::istringstream j(payload);
+          int rot;
+          j >> rot;
+          players[from_id].rot = rot;
+
+          // broadcast bullet
+          std::ostringstream out;
+          out << "10\n" << from_id << " " << rot;
+          broadcast_message(out.str(), clients); 
+        }
 
         default:
           std::cerr << "INVALID PACKET TYPE: " << packet_type << std::endl;

@@ -23,6 +23,7 @@ int sock = socket(AF_INET, SOCK_STREAM, 0);
 
 std::mutex packets_mutex;
 std::list<std::string> packets = {};
+std::vector<Bullet> bullets;
 
 std::atomic<bool> running = true;
 
@@ -150,6 +151,20 @@ void handle_packet(int packet_type, std::string payload,
           uint_to_color(std::stoi(msg_split[1]));
     }
   } break;
+  case 10: {
+    split(payload, std::string(" "), msg_split);
+    int from_id = std::stoi(msg_split[0]);
+    float rot = std::stof(msg_split[1]);
+    float angleRad = (-rot + 5) * DEG2RAD;
+    Vector2 dir = Vector2Scale({cosf(angleRad), -sinf(angleRad)}, -10);
+    Vector2 spawnOffset = Vector2Scale({cosf(angleRad), -sinf(angleRad)}, -120);
+    Vector2 origin = {(float)players->at(from_id).x + 50, (float)players->at(from_id).y + 50};
+    Vector2 spawnPos = Vector2Add(origin, spawnOffset);
+    bullets.push_back(Bullet(spawnPos.x, spawnPos.y, dir));
+  } break;
+  default:
+    std::cerr << "Invalid packet type: " << packet_type << std::endl;
+    break;
   }
 }
 
@@ -305,7 +320,6 @@ int main() {
   ImageResizeNN(&floorImage, 100, 100);
   Texture2D floorTexture = LoadTextureFromImage(floorImage);
   std::map<int, Player> players;
-  std::vector<Bullet> bullets;
 
   std::map<Color, Texture2D, ColorCompare> player_textures;
   player_textures[RED] = LoadTexture("player_red.png");
@@ -398,8 +412,8 @@ int main() {
       canshoot = false;
       bdelay = 20;
       float bspeed = 10;
-      float angleRad = (-players[my_id].rot + 5) * DEG2RAD;
-      Vector2 dir = Vector2Scale({cosf(angleRad), -sinf(angleRad)}, -bspeed);
+      float angleRad = (-players[my_id].rot + 5) * DEG2RAD; // 5 degrees offset to account for the gun's position
+      Vector2 dir = Vector2Scale({cosf(angleRad), -sinf(angleRad)}, -bspeed); // degrees in radians, straight up is 0 degrees
       Vector2 spawnOffset =
           Vector2Scale({cosf(angleRad), -sinf(angleRad)}, -120);
       Vector2 origin = {(float)players[my_id].x + 50,
@@ -409,7 +423,7 @@ int main() {
 
       send_message(
           std::string("10\n ").append(std::to_string(players[my_id].rot)),
-          sock);
+          sock); // shooting straight up would be this message: 10\n<from_id> 0
     }
 
     // ------------------------------------------------------------------------------

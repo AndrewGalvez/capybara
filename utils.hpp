@@ -8,6 +8,8 @@
 #include <string>
 #include <sys/socket.h>
 #include <vector>
+#include <map>
+#include <thread>
 
 inline bool color_equal(Color a, Color b) {
   return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
@@ -67,6 +69,13 @@ inline void send_message(std::string msg, int sock) {
 inline void broadcast_message(std::string msg, std::vector<int> socks) {
   for (int s : socks)
     send_message(msg, s);
+}
+
+// because the other broadcast_message doesn't work with the map
+inline void broadcast_message(std::string msg, const std::map<int, std::pair<int, std::thread>>& clients) {
+  for (const auto& [_, client] : clients) {
+    send_message(msg, client.first);
+  }
 }
 
 inline void split(std::string str, std::string splitBy,
