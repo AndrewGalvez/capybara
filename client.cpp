@@ -297,15 +297,53 @@ void move_players(std::map<int, Player> *players, int skip) {
   }
 }
 
-int main() {
+void print_usage() {
+    std::cout << "Usage: ./client [options]\n"
+              << "Options:\n"
+              << "  --server=IP:PORT    Server address and port (default: 127.0.0.1:50000)\n"
+              << "  --help              Show this help message\n";
+}
+
+int main(int argc, char* argv[]) {
+  std::string server_addr = "127.0.0.1";
+  int server_port = 50000;
+
+  // parse command line arguments
+  for (int i = 1; i < argc; i++) {
+    std::string arg = argv[i];
+    if (arg == "--help") {
+      print_usage();
+      return 0;
+    } else if (arg.substr(0, 9) == "--server=") {
+      std::string server = arg.substr(9);
+      size_t colon_pos = server.find(':');
+      if (colon_pos != std::string::npos) {
+        server_addr = server.substr(0, colon_pos);
+        try {
+          server_port = std::stoi(server.substr(colon_pos + 1));
+        } catch (const std::exception& e) {
+          std::cerr << "Invalid port: " << server.substr(colon_pos + 1) << std::endl;
+          return 1;
+        }
+      } else {
+        server_addr = server;
+      }
+    }
+  }
+
+  int sock = socket(AF_INET, SOCK_STREAM, 0);
+  if (sock < 0) {
+    perror("Could not create socket :(");
+    return -1;
+  }
+
   sockaddr_in sock_addr;
   sock_addr.sin_family = AF_INET;
-  sock_addr.sin_port = htons(50000);
-  sock_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+  sock_addr.sin_port = htons(server_port);
+  sock_addr.sin_addr.s_addr = inet_addr(server_addr.c_str());
 
   if (connect(sock, (struct sockaddr *)&sock_addr, sizeof(sock_addr)) < 0) {
     perror("Could not connect to server");
-
     close(sock);
     return -1;
   }
