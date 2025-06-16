@@ -1,8 +1,9 @@
 #ifndef PLAYER_H
 #define PLAYER_H
-
 #include <raylib.h>
 #include <string>
+#include "constants.hpp"
+
 struct Player {
 public:
   int x = 0;
@@ -33,8 +34,16 @@ public:
     if (IsKeyDown(KEY_D))
       dir_x += speed;
 
-    this->x += dir_x;
-    this->y += dir_y;
+    // Check boundaries before moving
+    int new_x = this->x + dir_x;
+    int new_y = this->y + dir_y;
+    
+    if (new_x >= PLAYING_AREA.x && new_x <= PLAYING_AREA.width - 100) {
+      this->x = new_x;
+    }
+    if (new_y >= PLAYING_AREA.y && new_y <= PLAYING_AREA.height - 100) {
+      this->y = new_y;
+    }
 
     return out;
   }
