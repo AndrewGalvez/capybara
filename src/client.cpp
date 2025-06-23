@@ -549,20 +549,32 @@ void draw_ui(Color my_ui_color, playermap players,
   // minimap
   DrawRectangle(window_size.x - 100, 0, 100, 100, GRAY);
 
-  // the assassin gets to see the minimap with the darkness effect
-  if (darkness_active && !is_assassin) {
-    if (players.count(my_id)) {
-      Player& local_player = players[my_id];
-      float map_x = window_size.x - 100 + (local_player.x / (PLAYING_AREA.width / 100)) + darkness_offset.x;
-      float map_y = (local_player.y / (PLAYING_AREA.height / 100)) + darkness_offset.y;
-      
-      map_x = std::max(window_size.x - 100.0f, std::min(window_size.x - 10.0f, map_x));
-      map_y = std::max(0.0f, std::min(90.0f, map_y));
-      
-      DrawRectangle(map_x, map_y, 10, 10, my_ui_color);
+  if (darkness_active) {
+    if (is_assassin) {
+      // assassin sees everyone normally during darkness
+      for (auto &[id, p] : players) {
+        if (id == my_id) {
+          DrawRectangle(window_size.x - 100 + p.x / (PLAYING_AREA.width / 100),
+                        p.y / (PLAYING_AREA.height / 100), 10, 10, my_ui_color);
+        } else if (!color_equal(p.color, INVISIBLE)) {
+          DrawRectangle(window_size.x - 100 + p.x / (PLAYING_AREA.width / 100),
+                        p.y / (PLAYING_AREA.height / 100), 10, 10, p.color);
+        }
+      }
+    } else {
+      if (players.count(my_id)) {
+        Player& local_player = players[my_id];
+        float map_x = window_size.x - 100 + (local_player.x / (PLAYING_AREA.width / 100)) + darkness_offset.x;
+        float map_y = (local_player.y / (PLAYING_AREA.height / 100)) + darkness_offset.y;
+        
+        map_x = std::max(window_size.x - 100.0f, std::min(window_size.x - 10.0f, map_x));
+        map_y = std::max(0.0f, std::min(90.0f, map_y));
+        
+        DrawRectangle(map_x, map_y, 10, 10, my_ui_color);
+      }
     }
   } else {
-    // normal minimap - show all visible players
+    // Normal visibility (no darkness)
     for (auto &[id, p] : players) {
       if (id == my_id) {
         DrawRectangle(window_size.x - 100 + p.x / (PLAYING_AREA.width / 100),
@@ -1032,20 +1044,32 @@ int main(int argc, char **argv) {
     DrawRectangle(window_size.x - 100, 0, 100, 100, GRAY);
 
     if (darkness_active) {
-      // During darkness, only show local player with inaccurate position
-      if (game.players.count(my_id)) {
-        Player& local_player = game.players[my_id];
-        float map_x = window_size.x - 100 + (local_player.x / (PLAYING_AREA.width / 100)) + darkness_offset.x;
-        float map_y = (local_player.y / (PLAYING_AREA.height / 100)) + darkness_offset.y;
-        
-        // Clamp to minimap bounds
-        map_x = std::max(window_size.x - 100.0f, std::min(window_size.x - 10.0f, map_x));
-        map_y = std::max(0.0f, std::min(90.0f, map_y));
-        
-        DrawRectangle(map_x, map_y, 10, 10, my_true_color);
+      if (is_assassin) {
+        // Assassins see everyone normally during darkness
+        for (auto &[id, p] : game.players) {
+          if (id == my_id) {
+            DrawRectangle(window_size.x - 100 + p.x / (PLAYING_AREA.width / 100),
+                          p.y / (PLAYING_AREA.height / 100), 10, 10, my_true_color);
+          } else if (!color_equal(p.color, INVISIBLE)) {
+            DrawRectangle(window_size.x - 100 + p.x / (PLAYING_AREA.width / 100),
+                          p.y / (PLAYING_AREA.height / 100), 10, 10, p.color);
+          }
+        }
+      } else {
+        // Non-assassins only see themselves with randomized position
+        if (game.players.count(my_id)) {
+          Player& local_player = game.players[my_id];
+          float map_x = window_size.x - 100 + (local_player.x / (PLAYING_AREA.width / 100)) + darkness_offset.x;
+          float map_y = (local_player.y / (PLAYING_AREA.height / 100)) + darkness_offset.y;
+          
+          map_x = std::max(window_size.x - 100.0f, std::min(window_size.x - 10.0f, map_x));
+          map_y = std::max(0.0f, std::min(90.0f, map_y));
+          
+          DrawRectangle(map_x, map_y, 10, 10, my_true_color);
+        }
       }
     } else {
-      // Normal minimap - show all visible players
+      // Normal visibility (no darkness)
       for (auto &[id, p] : game.players) {
         if (id == my_id) {
           DrawRectangle(window_size.x - 100 + p.x / (PLAYING_AREA.width / 100),
