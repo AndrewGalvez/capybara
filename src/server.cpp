@@ -905,10 +905,29 @@ int main() {
               std::cout << j.str() << '\n';
               broadcast_message(j.str(), clients, from_id);
             } break;
+            case 12: { // MSG_SWITCH_WEAPON
+              std::istringstream iss(payload);
+              int player_id, weapon_id;
+              iss >> player_id >> weapon_id;
+
+              if (iss.fail()) {
+                std::cerr << "Invalid MSG_SWITCH_WEAPON packet: " << payload << std::endl;
+                break;
+              }
+
+              std::scoped_lock locks(game_mutex, clients_mutex);
+              if (game.players.find(player_id) != game.players.end()) {
+                game.players[player_id].weapon_id = weapon_id;
+                // Broadcast weapon change to all clients
+                std::ostringstream msg;
+                msg << "12\n" << player_id << " " << weapon_id;
+                broadcast_message(msg.str(), clients, from_id);
+              }
+            } break;
             default:
               std::cerr << "INVALID PACKET TYPE: " << packet_type << std::endl;
               break;
-            }
+          }
           } catch (const std::exception& e) {
             std::cerr << "Error processing packet: " << e.what() << std::endl;
           }

@@ -284,6 +284,20 @@ void handle_packet(int packet_type, std::string payload, Game *game,
     
     break;
   }
+  case MSG_SWITCH_WEAPON: {
+    std::istringstream iss(payload);
+    int player_id, weapon_id;
+    iss >> player_id >> weapon_id;
+    
+    if (iss.fail()) {
+      std::cerr << "Invalid MSG_SWITCH_WEAPON packet: " << payload << std::endl;
+      break;
+    }
+    
+    if (player_id != *my_id) {
+      game->players[player_id].weapon_id = weapon_id;
+    }
+  }
   }
 }
 
@@ -678,7 +692,10 @@ void draw_players(playermap players, ResourceManager *res_man, int my_id) {
         break;
       }
       case flashlight:
-        // No weapon drawing for flashlight yet
+        DrawTexturePro(res_man->getTex("assets/flashlight.png"), 
+                        {(float)0, (float)0, 16, 16},
+                        {(float)p.x + 50, (float)p.y + 50, 50, 50},
+                        {(float)100, (float)0}, p.rot, WHITE);
         break;
       default:
         // Unknown weapon type - no drawing
@@ -882,10 +899,14 @@ int main(int argc, char **argv) {
     float scaledHeight = window_size.y * scale;
     float offsetX = (GetScreenWidth() - scaledWidth) * 0.5f;
     float offsetY = (GetScreenHeight() - scaledHeight) * 0.5f;
-
-    bool moved_gun = move_wpn(&game.players[my_id].rot, cx, cy, cam, scale,
+    bool moved_gun = false;
+    if (game.players[my_id].weapon_id == Weapon::gun_or_knife) {
+      moved_gun = move_wpn(&game.players[my_id].rot, cx, cy, cam, scale,
                               offsetX, offsetY);
-
+    } else if (game.players[my_id].weapon_id == Weapon::flashlight) {
+      moved_gun = move_wpn(&game.players[my_id].rot, cx, cy, cam, scale,
+                              offsetX, offsetY);
+    }
     hasmoved = moved || moved_gun;
 
     if (server_update_counter >= 5 && hasmoved) {
@@ -924,6 +945,30 @@ int main(int argc, char **argv) {
           sock);
     }
 
+    // detect scrolling
+    {
+      const int MAX_WEAPON_ID = 1;
+
+      float scroll = GetMouseWheelMove();
+      bool scroll_changed = false;
+      int currentWeapon = game.players[my_id].weapon_id;
+
+      if (scroll > 0) {
+        currentWeapon = (currentWeapon + 1) % (MAX_WEAPON_ID + 1);
+        scroll_changed = true;
+      } else if (scroll < 0) {
+        currentWeapon = (currentWeapon - 1 + (MAX_WEAPON_ID + 1)) % (MAX_WEAPON_ID + 1);
+        scroll_changed = true;
+      }
+
+      if (scroll_changed) {
+        game.players[my_id].weapon_id = currentWeapon;
+        std::ostringstream msg;
+        msg << "12\n" << my_id << " " << currentWeapon;
+        send_message(msg.str(), sock);
+      }
+    }
+
     // draw to render texture
     BeginTextureMode(target);
     ClearBackground(BLUE);
@@ -949,28 +994,57 @@ int main(int argc, char **argv) {
 
     EndTextureMode();
 
-    // Apply darkness effect if active
-    if (darkness_active) {
+    // Apply darkness effect if active and player is not assassin
+    if (darkness_active && !is_assassin) {
       // Clear and prepare darkness mask each frame
       BeginTextureMode(darknessMask);
-      ClearBackground(Color{0, 0, 0, 255}); // Complete darkness (full alpha)
+      ClearBackground(Color{0, 0, 0, 254}); // Slightly less dark (254 alpha instead of 255)
       
-      // Draw light around local player
-      if (game.players.count(my_id)) {
+      // Draw lights for all players
+      for (auto &[id, p] : game.players) {
         Vector2 playerScreenPos = GetWorldToScreen2D(
-          Vector2{(float)game.players[my_id].x + 50, (float)game.players[my_id].y + 50}, 
+          Vector2{(float)p.x + 50, (float)p.y + 50}, 
           cam
         );
+
+        // Draw ambient light around player if it's local player
+        if (id == my_id) {
+          DrawTexture(lightTex, 
+                     playerScreenPos.x - lightTex.width / 2, 
+                     playerScreenPos.y - lightTex.height / 2, 
+                     WHITE);
+        }
         
-        // Draw the light circle centered on the player
-        DrawTexture(lightTex, 
-                   playerScreenPos.x - lightTex.width / 2, 
-                   playerScreenPos.y - lightTex.height / 2, 
-                   WHITE);
-        
-        // If flashlight on, draw flashlight cone
-        if (game.players[my_id].weapon_id == 1) {
-          draw_flashlight_cone(playerScreenPos, game.players[my_id].rot);
+        // Draw flashlight beam if player has flashlight
+        if (p.weapon_id == Weapon::flashlight) {
+          float angleRad = (-p.rot + 5 + 180) * DEG2RAD;  // Add 180 degrees to point in the right direction
+          float flashlight_distance = 600.0f;  // How far the light reaches
+          
+          float spread_angle = 15.0f * DEG2RAD;  // Narrower beam
+          
+          for (int i = 0; i < 4; i++) {
+            float current_spread = spread_angle * (1.0f - (float)i / 4.0f);  // Narrower spread for inner beams
+            float alpha = 180 - (i * 40);  // Brighter in the center
+            
+            Vector2 beam_left = {
+              playerScreenPos.x + cosf(angleRad - current_spread) * flashlight_distance,
+              playerScreenPos.y - sinf(angleRad - current_spread) * flashlight_distance
+            };
+            
+            Vector2 beam_right = {
+              playerScreenPos.x + cosf(angleRad + current_spread) * flashlight_distance,
+              playerScreenPos.y - sinf(angleRad + current_spread) * flashlight_distance
+            };
+            
+            // Draw layered beams
+            Color beam_color = {255, 255, 255, (unsigned char)alpha};
+            DrawTriangle(playerScreenPos, beam_left, beam_right, beam_color);
+          }
+          
+          // Add a small intense light at the source
+          float source_size = 30.0f;
+          Color source_color = {255, 255, 255, 200};
+          DrawCircle(playerScreenPos.x, playerScreenPos.y, source_size, source_color);
         }
       }
       EndTextureMode();
