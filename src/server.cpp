@@ -37,6 +37,11 @@ Color original_assassin_color;
 std::chrono::steady_clock::time_point assassin_start_time;
 std::set<int> used_assassin_ids; // used id(s)
 
+// darkness event tracking
+std::mutex darkness_mutex;
+bool darkness_active = false;
+std::chrono::steady_clock::time_point darkness_start_time;
+
 typedef std::list<std::pair<int, std::string>> packetlist;
 
 std::mutex packets_mutex;
@@ -55,8 +60,14 @@ std::map<int, std::chrono::steady_clock::time_point> pending_assassins;
 
 std::set<int> previous_targets;  // previous targets
 
-// Lock order: game_mutex -> assassin_mutex -> pending_assassin_mutex -> clients_mutex
+// Lock order: game_mutex -> assassin_mutex -> pending_assassin_mutex -> darkness_mutex -> clients_mutex
 // This order must be maintained in all functions to prevent deadlocks
+
+enum EventType {
+  Darkness = 0,
+  Assasin = 1,
+  Clear = 2
+};
 
 void clear_assassin_state_unlocked() {
   std::cout << "Clearing assassin state" << std::endl;
@@ -180,6 +191,17 @@ void handle_client(int client, int id) {
     }
   }
 
+  // if there's an active darkness event, send the darkness event message to the new client
+  {
+    std::lock_guard<std::mutex> darkness_lock(darkness_mutex);
+    if (darkness_active) {
+      std::ostringstream event_response;
+      event_response << "11\n" << EventType::Darkness;
+      send_message(event_response.str(), client);
+      std::cout << "Sent darkness state to new client " << id << std::endl;
+    }
+  }
+
   std::ostringstream out;
 
   // sanitize username for consistency
@@ -283,6 +305,9 @@ bool check_assassin_collision(int assassin_id, int target_id, int assassin_x, in
   // don't allow hitting self during pending period
   if (assassin_id == target_id) return false;
 
+  // only allow knife to hit other players
+  if (game.players[assassin_id].weapon_id != Weapon::gun_or_knife) return false;
+
   assassin_rot = normalize_rotation(assassin_rot + 180.0f);
 
   // null check
@@ -308,11 +333,6 @@ bool check_assassin_collision(int assassin_id, int target_id, int assassin_x, in
   
   return distance <= hitbox_radius;
 }
-
-enum EventType {
-  Darkness = 0,
-  Assasin = 1
-};
 
 void select_new_target(int assassin_id, bool is_initial_target) {
     std::vector<int> potential_targets;
@@ -409,16 +429,30 @@ void make_player_assassin(int target_id) {
   broadcast_message(response.str(), clients);
 }
 
-void summon_event(int delay) {
-  if (delay <= 70) {
-    return; // too short to summon an event/
+void summon_event(int delay, EventType event_type = EventType::Clear) {
+  if (delay <= 70 && event_type == EventType::Clear) {
+    return; // too short to summon an event (only applies to random events)
+  }
+  if (event_type == EventType::Clear) {
+    event_type = random_enum_element(EventType::Darkness, EventType::Assasin);
   }
 
-  EventType event = random_enum_element(EventType::Darkness, EventType::Assasin);
-
-  switch (event) {
-    case EventType::Darkness:
+  switch (event_type) {
+    case EventType::Darkness: {
+      std::scoped_lock locks(darkness_mutex, clients_mutex);
+      if (!darkness_active) {
+        darkness_active = true;
+        darkness_start_time = std::chrono::steady_clock::now();
+        
+        // send a message to all clients to start the darkness event
+        std::ostringstream event_response;
+        event_response << "11\n" << EventType::Darkness;
+        broadcast_message(event_response.str(), clients);
+        
+        std::cout << "Darkness event started" << std::endl;
+      }
       break;
+    }
     case EventType::Assasin: {
       int target_id = -1;
       {
@@ -474,7 +508,28 @@ void event_worker() {
 void check_pending_assassins() {
   std::scoped_lock all_locks(game_mutex, assassin_mutex, pending_assassin_mutex, clients_mutex);
   
-  // make sure under 1 min 
+  // check darkness event timeout (1 minute)
+  {
+    std::lock_guard<std::mutex> darkness_lock(darkness_mutex);
+    if (darkness_active) {
+      auto current_time = std::chrono::steady_clock::now();
+      auto darkness_duration = std::chrono::duration_cast<std::chrono::seconds>(
+          current_time - darkness_start_time).count();
+          
+      if (darkness_duration >= 60) {
+        darkness_active = false;
+        
+        // send clear event message to all clients
+        std::ostringstream clear_response;
+        clear_response << "11\n" << EventType::Clear;
+        broadcast_message(clear_response.str(), clients);
+        
+        std::cout << "Darkness event ended after 60 seconds" << std::endl;
+      }
+    }
+  }
+  
+  // make sure assassin event is under 1 min 
   if (assassin_id != -1) {
     auto current_time = std::chrono::steady_clock::now();
     auto event_duration = std::chrono::duration_cast<std::chrono::seconds>(
@@ -543,6 +598,8 @@ void handle_stdin_commands() {
         continue;
       }
       make_player_assassin(target_id);
+    } else if (command == "darkness") {
+      summon_event(0, EventType::Darkness);
     } else {
       std::cout << "Unknown command: " << command << std::endl;
     }

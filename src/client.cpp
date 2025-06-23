@@ -22,6 +22,8 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <chrono>
+#include <random>
 
 // Remove global socket declaration - will be created in main()
 int sock = -1; // Will be initialized in main()
@@ -41,6 +43,12 @@ bool is_assassin = false;
 static Sound assassin_sound;
 static bool assassin_sound_loaded = false;
 static bool assassin_nearby = false;
+
+// darkness effect tracking
+static bool darkness_active = false;
+static Vector2 darkness_offset = {0, 0};
+static std::chrono::steady_clock::time_point last_darkness_update;
+static float light_weakness = 0.3f; // Controls how far light penetrates darkness (0.0 = no penetration, 1.0 = full penetration)
 
 void do_recv() {
   char buffer[1024];
@@ -75,7 +83,8 @@ void do_recv() {
 
 enum EventType {
   Darkness = 0,
-  Assasin = 1
+  Assasin = 1,
+  Clear = 2
 };
 
 void handle_packet(int packet_type, std::string payload, Game *game,
@@ -171,6 +180,29 @@ void handle_packet(int packet_type, std::string payload, Game *game,
     if ((*game).players.find(std::stoi(payload)) != (*game).players.end())
       (*game).players.erase(std::stoi(payload));
     break;
+  case MSG_EVENT_SUMMON: {
+    std::istringstream iss(payload);
+    int event_type;
+    iss >> event_type;
+
+    if (iss.fail()) {
+      std::cerr << "Invalid MSG_EVENT_SUMMON packet: " << payload << std::endl;
+      break;
+    }
+
+    if (event_type == Darkness) {
+      std::cout << "Received darkness event: " << payload << std::endl;
+      darkness_active = true;
+      darkness_offset = {0, 0};
+      last_darkness_update = std::chrono::steady_clock::now();
+    } else if (event_type == Assasin) {
+      std::cout << "Received assasin event: " << payload << std::endl;
+    } else if (event_type == Clear) {
+      std::cout << "Received clear event: " << payload << std::endl;
+      darkness_active = false;
+    }
+    break;
+  }
   case MSG_PLAYER_UPDATE: {
     std::istringstream iss(payload);
     int id;
@@ -385,6 +417,81 @@ void manage_username_prompt(playermap *players, int my_id, Color options[5],
   }
 }
 
+void update_darkness_effect() {
+  if (!darkness_active) return;
+  
+  auto current_time = std::chrono::steady_clock::now();
+  auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+      current_time - last_darkness_update).count();
+  
+  if (elapsed >= 1) {
+    // Generate random offset within 25x25 area
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> dis(-12, 12); // -12 to +12 gives us 25x25 area
+    
+    darkness_offset.x = dis(gen);
+    darkness_offset.y = dis(gen);
+    last_darkness_update = current_time;
+  }
+}
+
+void draw_flashlight_cone(Vector2 playerScreenPos, float player_rotation) {
+  // flashlight parameters
+  float flashlight_range = 600.0f;
+  float flashlight_angle = 45.0f; // cone angle in degrees
+  
+  // convert rotation to radians
+  float angle_rad = (player_rotation - 90.0f) * DEG2RAD; // -90 to align with "up" direction
+  
+  // create flashlight cone using triangles
+  Vector2 player_center = {playerScreenPos.x, playerScreenPos.y};
+  
+  // calculate cone endpoints
+  float half_angle = (flashlight_angle * 0.5f) * DEG2RAD;
+  
+  Vector2 cone_left = {
+    player_center.x + cosf(angle_rad - half_angle) * flashlight_range,
+    player_center.y + sinf(angle_rad - half_angle) * flashlight_range
+  };
+  
+  Vector2 cone_right = {
+    player_center.x + cosf(angle_rad + half_angle) * flashlight_range,
+    player_center.y + sinf(angle_rad + half_angle) * flashlight_range
+  };
+  
+  Vector2 cone_center = {
+    player_center.x + cosf(angle_rad) * flashlight_range,
+    player_center.y + sinf(angle_rad) * flashlight_range
+  };
+  
+  // draw the main cone with high intensity (very transparent for strong light)
+  unsigned char main_intensity = (unsigned char)(255 * light_weakness * 0.2f); // Very strong light
+  Color main_cone_color = {255, 255, 255, main_intensity};
+  
+  // draw center triangle (strongest light)
+  DrawTriangle(player_center, cone_left, cone_center, main_cone_color);
+  DrawTriangle(player_center, cone_center, cone_right, main_cone_color);
+  
+  // draw outer edges with medium intensity
+  unsigned char edge_intensity = (unsigned char)(255 * light_weakness * 0.6f);
+  Color edge_cone_color = {255, 255, 255, edge_intensity};
+  
+  // add some width to the cone edges for smoother falloff
+  Vector2 outer_left = {
+    player_center.x + cosf(angle_rad - half_angle * 1.2f) * flashlight_range,
+    player_center.y + sinf(angle_rad - half_angle * 1.2f) * flashlight_range
+  };
+  
+  Vector2 outer_right = {
+    player_center.x + cosf(angle_rad + half_angle * 1.2f) * flashlight_range,
+    player_center.y + sinf(angle_rad + half_angle * 1.2f) * flashlight_range
+  };
+  
+  DrawTriangle(player_center, outer_left, cone_left, edge_cone_color);
+  DrawTriangle(player_center, cone_right, outer_right, edge_cone_color);
+}
+
 void draw_ui(Color my_ui_color, playermap players,
              std::vector<Bullet> bullets, int my_id, int shoot_cooldown,
              Camera2D cam, float scale) {
@@ -442,20 +549,35 @@ void draw_ui(Color my_ui_color, playermap players,
   // minimap
   DrawRectangle(window_size.x - 100, 0, 100, 100, GRAY);
 
-  for (auto &[id, p] : players) {
-    if (id == my_id) {
-      DrawRectangle(window_size.x - 100 + p.x / (PLAYING_AREA.width / 100),
-                    p.y / (PLAYING_AREA.height / 100), 10, 10, my_ui_color);
-    } else if (!color_equal(p.color, INVISIBLE)) {
-      DrawRectangle(window_size.x - 100 + p.x / (PLAYING_AREA.width / 100),
-                    p.y / (PLAYING_AREA.height / 100), 10, 10, p.color);
+  // the assassin gets to see the minimap with the darkness effect
+  if (darkness_active && !is_assassin) {
+    if (players.count(my_id)) {
+      Player& local_player = players[my_id];
+      float map_x = window_size.x - 100 + (local_player.x / (PLAYING_AREA.width / 100)) + darkness_offset.x;
+      float map_y = (local_player.y / (PLAYING_AREA.height / 100)) + darkness_offset.y;
+      
+      map_x = std::max(window_size.x - 100.0f, std::min(window_size.x - 10.0f, map_x));
+      map_y = std::max(0.0f, std::min(90.0f, map_y));
+      
+      DrawRectangle(map_x, map_y, 10, 10, my_ui_color);
     }
-  }
+  } else {
+    // normal minimap - show all visible players
+    for (auto &[id, p] : players) {
+      if (id == my_id) {
+        DrawRectangle(window_size.x - 100 + p.x / (PLAYING_AREA.width / 100),
+                      p.y / (PLAYING_AREA.height / 100), 10, 10, my_ui_color);
+      } else if (!color_equal(p.color, INVISIBLE)) {
+        DrawRectangle(window_size.x - 100 + p.x / (PLAYING_AREA.width / 100),
+                      p.y / (PLAYING_AREA.height / 100), 10, 10, p.color);
+      }
+    }
 
-  for (Bullet b : bullets)
-    DrawCircle(window_size.x - 100 + b.x / (PLAYING_AREA.width / 100),
-               b.y / (PLAYING_AREA.height / 100),
-               b.r / (PLAYING_AREA.width / 100), BLACK);
+    for (Bullet b : bullets)
+      DrawCircle(window_size.x - 100 + b.x / (PLAYING_AREA.width / 100),
+                 b.y / (PLAYING_AREA.height / 100),
+                 b.r / (PLAYING_AREA.width / 100), BLACK);
+  }
 
   EndUiDrawing();
 }
@@ -482,62 +604,73 @@ void draw_players(playermap players, ResourceManager *res_man, int my_id) {
                BLACK);
     }
 
-    // weapon
-    if (id == my_id && is_assassin) {
-      Vector2 player_center = {(float)p.x + 50, (float)p.y + 50};
-      float knife_offset = 80.0f;
-      
-      DrawTexturePro(res_man->getTex("assets/assassin_knife.png"), 
-                     {(float)0, (float)0, 16, 16},
-                     {player_center.x, player_center.y, 80, 80}, 
-                     {(float)40 + knife_offset, (float)40}, 
-                     p.rot, WHITE);
-    } else if (color_equal(p.color, INVISIBLE) && id != my_id) {
-      if (players.count(my_id)) {
-        float distance = sqrtf(powf(p.x - players[my_id].x, 2) + powf(p.y - players[my_id].y, 2));
-        float close_distance = 300.0f; 
-        
-        if (distance <= close_distance) {
+    // weapon drawing based on weapon_id
+    switch (static_cast<Weapon>(p.weapon_id)) {
+      case gun_or_knife: {
+        if (id == my_id && is_assassin) {
           Vector2 player_center = {(float)p.x + 50, (float)p.y + 50};
           float knife_offset = 80.0f;
           
-          // Calculate alpha based on distance - more transparent when further away
-          float alpha_scale = 1.0f - (distance / close_distance);
-          unsigned char alpha = (unsigned char)(alpha_scale * 192);
-          Color knife_tint = {255, 255, 255, alpha};
-          
           DrawTexturePro(res_man->getTex("assets/assassin_knife.png"), 
-                         {(float)0, (float)0, 16, 16}, 
+                         {(float)0, (float)0, 16, 16},
                          {player_center.x, player_center.y, 80, 80}, 
                          {(float)40 + knife_offset, (float)40}, 
-                         p.rot, knife_tint);
-          // play sound when close
-          if (!assassin_sound_loaded) {
-            assassin_sound = LoadSound("assets/assassin_close.wav");
-            assassin_sound_loaded = true;
+                         p.rot, WHITE);
+        } else if (color_equal(p.color, INVISIBLE) && id != my_id) {
+          if (players.count(my_id)) {
+            float distance = sqrtf(powf(p.x - players[my_id].x, 2) + powf(p.y - players[my_id].y, 2));
+            float close_distance = 300.0f; 
+            
+            if (distance <= close_distance) {
+              Vector2 player_center = {(float)p.x + 50, (float)p.y + 50};
+              float knife_offset = 80.0f;
+              
+              // Calculate alpha based on distance - more transparent when further away
+              float alpha_scale = 1.0f - (distance / close_distance);
+              unsigned char alpha = (unsigned char)(alpha_scale * 192);
+              Color knife_tint = {255, 255, 255, alpha};
+              
+              DrawTexturePro(res_man->getTex("assets/assassin_knife.png"), 
+                             {(float)0, (float)0, 16, 16}, 
+                             {player_center.x, player_center.y, 80, 80}, 
+                             {(float)40 + knife_offset, (float)40}, 
+                             p.rot, knife_tint);
+              // play sound when close
+              if (!assassin_sound_loaded) {
+                assassin_sound = LoadSound("assets/assassin_close.wav");
+                assassin_sound_loaded = true;
+              }
+              
+              float volume = 1.0f - (distance / close_distance);
+              volume = volume * 0.5f;
+              SetSoundVolume(assassin_sound, volume);
+              
+              // start or continue looping
+              if (!IsSoundPlaying(assassin_sound)) {
+                PlaySound(assassin_sound);
+              }
+              assassin_nearby = true;
+            } else {
+              // assassin moved away, stop the sound
+              if (assassin_nearby && IsSoundPlaying(assassin_sound)) {
+                StopSound(assassin_sound);
+              }
+              assassin_nearby = false;
+            }
           }
-          
-          float volume = 1.0f - (distance / close_distance);
-          volume = volume * 0.5f;
-          SetSoundVolume(assassin_sound, volume);
-          
-          // start or continue looping
-          if (!IsSoundPlaying(assassin_sound)) {
-            PlaySound(assassin_sound);
-          }
-          assassin_nearby = true;
         } else {
-          // assassin moved away, stop the sound
-          if (assassin_nearby && IsSoundPlaying(assassin_sound)) {
-            StopSound(assassin_sound);
-          }
-          assassin_nearby = false;
+          // gun/barrel/thing
+          DrawRectanglePro({(float)p.x + 50, (float)p.y + 50, 50, 20},
+                           {(float)100, (float)0}, p.rot, BLACK);
         }
+        break;
       }
-    } else {
-      // gun/barrel/thing
-      DrawRectanglePro({(float)p.x + 50, (float)p.y + 50, 50, 20},
-                       {(float)100, (float)0}, p.rot, BLACK);
+      case flashlight:
+        // No weapon drawing for flashlight yet
+        break;
+      default:
+        // Unknown weapon type - no drawing
+        break;
     }
   }
 }
@@ -634,7 +767,7 @@ int main(int argc, char **argv) {
   }
 
   std::thread recv_thread(do_recv);
-  SetWindowState(FLAG_WINDOW_RESIZABLE);
+  SetConfigFlags(FLAG_WINDOW_RESIZABLE);
   
   InitWindow(800, 600, "Multi Ludens");
 
@@ -662,6 +795,40 @@ int main(int argc, char **argv) {
   cam.offset = Vector2{window_size.x / 2.0f, window_size.y / 2.0f};
   // create render texture to draw game at normal res
   RenderTexture2D target = LoadRenderTexture(window_size.x, window_size.y);
+  // Create light texture for darkness effect once
+  Texture2D lightTex = {0};
+  {
+    int size = 400;
+    Image lightImg = GenImageColor(size, size, Color{0, 0, 0, 0});
+    
+    float center = size / 2.0f;
+    float max_radius = 200.0f;
+    
+    for (int y = 0; y < size; y++) {
+      for (int x = 0; x < size; x++) {
+        float dx = x - center;
+        float dy = y - center;
+        float distance = sqrtf(dx * dx + dy * dy);
+        
+        if (distance <= max_radius) {
+          float alpha_factor = distance / max_radius;
+          alpha_factor = alpha_factor * alpha_factor;
+          unsigned char alpha = (unsigned char)(255.0f * (1.0f - alpha_factor));
+          
+          Color pixel_color = {255, 255, 255, alpha};
+          ImageDrawPixel(&lightImg, x, y, pixel_color);
+        }
+      }
+    }
+    
+    lightTex = LoadTextureFromImage(lightImg);
+    UnloadImage(lightImg);
+  }
+
+  RenderTexture2D darknessMask = LoadRenderTexture(window_size.x, window_size.y);
+  Image lightImg = GenImageGradientRadial(256, 256, 0.0f, WHITE, BLANK);
+  lightTex = LoadTextureFromImage(lightImg);
+  UnloadImage(lightImg);
 
   while (!WindowShouldClose() && running) {
     // calculate zoom based on actual window size relative to normal window size
@@ -678,6 +845,9 @@ int main(int argc, char **argv) {
       EndDrawing();
       continue;
     };
+
+    // update darkness effect
+    update_darkness_effect();
 
     // Put here to make sure id exists
     int cx = game.players[my_id].x;
@@ -765,10 +935,134 @@ int main(int argc, char **argv) {
 
     EndMode2D();
 
-    // HUD
-    draw_ui(my_true_color, game.players, game.bullets, my_id,
-            bdelay, cam, scale);
+    EndTextureMode();
 
+    // Apply darkness effect if active
+    if (darkness_active) {
+      // Clear and prepare darkness mask each frame
+      BeginTextureMode(darknessMask);
+      ClearBackground(Color{0, 0, 0, 255}); // Complete darkness (full alpha)
+      
+      // Draw light around local player
+      if (game.players.count(my_id)) {
+        Vector2 playerScreenPos = GetWorldToScreen2D(
+          Vector2{(float)game.players[my_id].x + 50, (float)game.players[my_id].y + 50}, 
+          cam
+        );
+        
+        // Draw the light circle centered on the player
+        DrawTexture(lightTex, 
+                   playerScreenPos.x - lightTex.width / 2, 
+                   playerScreenPos.y - lightTex.height / 2, 
+                   WHITE);
+        
+        // If flashlight on, draw flashlight cone
+        if (game.players[my_id].weapon_id == 1) {
+          draw_flashlight_cone(playerScreenPos, game.players[my_id].rot);
+        }
+      }
+      EndTextureMode();
+      
+      // Apply darkness mask to main render target
+      BeginTextureMode(target);
+      BeginBlendMode(BLEND_MULTIPLIED);
+      
+      Rectangle source = {0, 0, (float)darknessMask.texture.width, (float)-darknessMask.texture.height};
+      Rectangle dest = {0, 0, (float)window_size.x, (float)window_size.y};
+      DrawTexturePro(darknessMask.texture, source, dest, Vector2{0, 0}, 0.0f, WHITE);
+      
+      EndBlendMode();
+      EndTextureMode();
+    }
+
+    // Draw all HUD elements on top (after darkness effect)
+    BeginTextureMode(target);
+    BeginUiDrawing();
+
+    DrawFPS(0, 0);
+
+    if (is_assassin && my_target_id != -1) {
+      // draw assassin status box at top center
+      DrawRectangle(300, 10, 200, 60, DARKGRAY);
+      DrawText("ASSASSIN MODE", 320, 20, 16, RED);
+      DrawText("Target:", 330, 35, 12, WHITE);
+      if (my_target_id == my_id) {
+        DrawText("Pending...", 330, 50, 12, YELLOW);
+      } else if (game.players.count(my_target_id)) {
+        DrawText(game.players[my_target_id].username.c_str(), 330, 50, 12, game.players[my_target_id].color);
+      } else {
+        DrawText("Unknown", 330, 50, 12, RED);
+      }
+    }
+
+    // Base dimensions for UI elements
+    float boxHeight = 50;
+    float padding = 5;
+    float squareSize = 40;
+    float textSize = 24;
+    float textPadding = 50;
+    float textWidth = MeasureText(game.players[my_id].username.c_str(), textSize);
+    float boxWidth = textPadding + textWidth + (padding * 2);
+
+    // fix name clipping out of box
+    if (boxWidth < squareSize + padding * 2) {
+      boxWidth = squareSize + padding * 2;
+    }
+
+    // position at bottom of render texture (not screen)
+    float y = window_size.y - boxHeight;
+
+    // background
+    DrawRectangle(0, y, boxWidth, boxHeight, DARKGRAY);
+
+    // player info
+    DrawRectangle(padding, y + (boxHeight - squareSize) / 2, squareSize,
+                  squareSize, my_true_color);
+    DrawText(game.players[my_id].username.c_str(), textPadding,
+             y + (boxHeight - textSize) / 2, textSize, WHITE);
+
+    // cooldown bar
+    if (bdelay != 20) {
+      float barHeight = 10;
+      float barY = y + boxHeight - padding - barHeight;
+      DrawRectangle(textPadding, barY, (20 - bdelay) * 2, barHeight, GREEN);
+    }
+
+    // minimap
+    DrawRectangle(window_size.x - 100, 0, 100, 100, GRAY);
+
+    if (darkness_active) {
+      // During darkness, only show local player with inaccurate position
+      if (game.players.count(my_id)) {
+        Player& local_player = game.players[my_id];
+        float map_x = window_size.x - 100 + (local_player.x / (PLAYING_AREA.width / 100)) + darkness_offset.x;
+        float map_y = (local_player.y / (PLAYING_AREA.height / 100)) + darkness_offset.y;
+        
+        // Clamp to minimap bounds
+        map_x = std::max(window_size.x - 100.0f, std::min(window_size.x - 10.0f, map_x));
+        map_y = std::max(0.0f, std::min(90.0f, map_y));
+        
+        DrawRectangle(map_x, map_y, 10, 10, my_true_color);
+      }
+    } else {
+      // Normal minimap - show all visible players
+      for (auto &[id, p] : game.players) {
+        if (id == my_id) {
+          DrawRectangle(window_size.x - 100 + p.x / (PLAYING_AREA.width / 100),
+                        p.y / (PLAYING_AREA.height / 100), 10, 10, my_true_color);
+        } else if (!color_equal(p.color, INVISIBLE)) {
+          DrawRectangle(window_size.x - 100 + p.x / (PLAYING_AREA.width / 100),
+                        p.y / (PLAYING_AREA.height / 100), 10, 10, p.color);
+        }
+      }
+
+      for (Bullet b : game.bullets)
+        DrawCircle(window_size.x - 100 + b.x / (PLAYING_AREA.width / 100),
+                   b.y / (PLAYING_AREA.height / 100),
+                   b.r / (PLAYING_AREA.width / 100), BLACK);
+    }
+
+    EndUiDrawing();
     EndTextureMode();
 
     // draw the scaled render texture to the window
@@ -786,6 +1080,10 @@ int main(int argc, char **argv) {
 
   // Cleanup
   UnloadRenderTexture(target);
+  UnloadRenderTexture(darknessMask);
+  if (lightTex.id != 0) {
+    UnloadTexture(lightTex);
+  }
   std::cout << "Closing.\n";
 
   running = false;
@@ -799,3 +1097,4 @@ int main(int argc, char **argv) {
 
   return clean_sock(); // return 0 if successful
 }
+
