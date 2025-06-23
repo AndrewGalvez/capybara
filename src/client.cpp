@@ -1,3 +1,5 @@
+#include "raylib.h"
+#include "raymath.h"
 #include "bullet.hpp"
 #include "codes.hpp"
 #include "constants.hpp"
@@ -5,28 +7,24 @@
 #include "game.hpp"
 #include "game_config.hpp"
 #include "math.h"
+#include "networking.hpp"
 #include "player.hpp"
-#include "raylib.h"
-#include "raymath.h"
 #include "resource_manager.hpp"
 #include "utils.hpp"
-#include <arpa/inet.h>
 #include <atomic>
 #include <cstdio>
 #include <iostream>
 #include <list>
 #include <map>
 #include <mutex>
-#include <netinet/in.h>
 #include <ostream>
 #include <sstream>
 #include <string>
-#include <sys/socket.h>
 #include <thread>
-#include <unistd.h>
 #include <vector>
 
-int sock = socket(AF_INET, SOCK_STREAM, 0);
+// Remove global socket declaration - will be created in main()
+int sock = -1; // Will be initialized in main()
 
 std::mutex packets_mutex;
 std::list<std::string> packets = {};
@@ -48,14 +46,14 @@ void do_recv() {
   char buffer[1024];
 
   while (running) {
-    int bytes = recv(sock, &buffer, sizeof(buffer), 0);
+    int bytes = recv_data(sock, &buffer, sizeof(buffer), 0);
 
     if (bytes == 0) {
       std::cout << "Server disconnected.\n";
       running = false;
       break;
     } else if (bytes < 0) {
-      perror("Error receiving packet");
+      print_socket_error("Error receiving packet");
       running = false;
       break;
     }
@@ -497,7 +495,7 @@ void draw_players(playermap players, ResourceManager *res_man, int my_id) {
     } else if (color_equal(p.color, INVISIBLE) && id != my_id) {
       if (players.count(my_id)) {
         float distance = sqrtf(powf(p.x - players[my_id].x, 2) + powf(p.y - players[my_id].y, 2));
-        float close_distance = 200.0f; 
+        float close_distance = 300.0f; 
         
         if (distance <= close_distance) {
           Vector2 player_center = {(float)p.x + 50, (float)p.y + 50};
@@ -582,16 +580,56 @@ void move_camera(Camera2D *cam, int cx, int cy) {
     cam->target.y = PLAYING_AREA.height - viewHeight / 2;
 }
 
-int main() {
-  sockaddr_in sock_addr;
-  sock_addr.sin_family = AF_INET;
-  sock_addr.sin_port = htons(50000);
-  sock_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+int init_sock() {
+  #if defined(_WIN32)
+    if (initialize_winsock() != 0) {
+      std::cerr << "Failed to initialize winsock" << std::endl;
+      return 1;
+    }
+  #endif
 
-  if (connect(sock, (struct sockaddr *)&sock_addr, sizeof(sock_addr)) < 0) {
-    perror("Could not connect to server");
+  return 0;
+}
 
-    close(sock);
+int clean_sock() {
+  #if defined(_WIN32)
+    cleanup_winsock();
+  #endif
+
+  return 0;
+}
+
+std::string get_ip_from_args(int argc, char **argv) {
+  if (argc >= 2) {
+    return std::string(argv[1]);
+  }
+
+  return std::string("127.0.0.1");
+}
+
+int main(int argc, char **argv) {
+  if (init_sock() == 1) return 1;
+
+  // Create socket after Winsock initialization
+  sock = create_socket(ADDRESS_FAMILY_INET, SOCKET_STREAM, 0);
+  
+  std::cout << "Socket creation returned: " << sock << std::endl;
+  
+  if (sock < 0) {
+    print_socket_error("Failed to create socket");
+    clean_sock();
+    return 1;
+  }
+
+  socket_address_in sock_addr;
+  sock_addr.sin_family = ADDRESS_FAMILY_INET;
+  sock_addr.sin_port = host_to_network_short(50000);
+  sock_addr.sin_addr.s_addr = ip_string_to_binary(get_ip_from_args(argc, argv).c_str()); // default to 127.0.0.1 if no arg
+
+  if (connect_socket(sock, (struct sockaddr *)&sock_addr, sizeof(sock_addr)) < 0) {
+    print_socket_error("Could not connect to server");
+
+    close_socket(sock);
     return -1;
   }
 
@@ -752,10 +790,12 @@ int main() {
 
   running = false;
 
-  shutdown(sock, SHUT_RDWR);
-  close(sock);
+  shutdown_socket(sock, SHUTDOWN_BOTH);
+  close_socket(sock);
 
   recv_thread.join();
 
   CloseWindow();
+
+  return clean_sock(); // return 0 if successful
 }
