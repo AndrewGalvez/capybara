@@ -564,7 +564,7 @@ bool move_wpn(float *rot, int cx, int cy, Camera2D cam, float scale,
 
 void move_camera(Camera2D *cam, int cx, int cy) {
   // center the camera on the player
-  cam->target = (Vector2){(float)cx + 50, (float)cy + 50};
+  cam->target = Vector2{(float)cx + 50, (float)cy + 50};
   
   // constrain camera to playing field boundaries
   float viewWidth = window_size.x / cam->zoom;
@@ -659,7 +659,7 @@ int main(int argc, char **argv) {
   Camera2D cam;
   cam.zoom = 1.0f;
   cam.rotation = 0.0f;
-  cam.offset = (Vector2){window_size.x / 2.0f, window_size.y / 2.0f};
+  cam.offset = Vector2{window_size.x / 2.0f, window_size.y / 2.0f};
   // create render texture to draw game at normal res
   RenderTexture2D target = LoadRenderTexture(window_size.x, window_size.y);
 
@@ -779,7 +779,7 @@ int main(int argc, char **argv) {
     Rectangle source = {0, 0, (float)target.texture.width,
                         (float)-target.texture.height};
     Rectangle dest = {offsetX, offsetY, scaledWidth, scaledHeight};
-    DrawTexturePro(target.texture, source, dest, (Vector2){0, 0}, 0.0f, WHITE);
+    DrawTexturePro(target.texture, source, dest, Vector2{0, 0}, 0.0f, WHITE);
 
     EndDrawing();
   }

@@ -58,8 +58,7 @@ std::set<int> previous_targets;  // previous targets
 // Lock order: game_mutex -> assassin_mutex -> pending_assassin_mutex -> clients_mutex
 // This order must be maintained in all functions to prevent deadlocks
 
-void clear_assassin_state() {
-  std::scoped_lock all_locks(game_mutex, assassin_mutex, pending_assassin_mutex, clients_mutex);
+void clear_assassin_state_unlocked() {
   std::cout << "Clearing assassin state" << std::endl;
   
   // reset assassin IDs
@@ -74,6 +73,11 @@ void clear_assassin_state() {
     
   // reset assassin start time
   assassin_start_time = std::chrono::steady_clock::now();
+}
+
+void clear_assassin_state() {
+  std::scoped_lock all_locks(game_mutex, assassin_mutex, pending_assassin_mutex, clients_mutex);
+  clear_assassin_state_unlocked();
 }
 
 void perform_shutdown() {
@@ -252,7 +256,7 @@ void handle_client(int client, int id) {
                  << color_to_uint(original_assassin_color);
         broadcast_message(response.str(), clients);
       }
-      clear_assassin_state();
+      clear_assassin_state_unlocked();
     }
   }
 
@@ -489,7 +493,7 @@ void check_pending_assassins() {
         
         broadcast_message(response.str(), clients);
       }
-      clear_assassin_state();
+      clear_assassin_state_unlocked();
       return;
     }
   }
@@ -748,7 +752,7 @@ int main() {
                 
                 // Set assassin to target themselves for 5 seconds
                 {
-                    std::scoped_lock locks(assassin_mutex, pending_assassin_mutex);
+                    std::scoped_lock locks(game_mutex, assassin_mutex, pending_assassin_mutex, clients_mutex);
                     assassin_target_id = current_assassin_id;  // Target self
                     pending_assassins[current_assassin_id] = std::chrono::steady_clock::now();
                     
@@ -765,12 +769,14 @@ int main() {
               }
               
               // Broadcast movement to other clients
-              std::lock_guard<std::mutex> clients_lock(clients_mutex);
-              for (const auto& [client_id, client_data] : clients) {
-                if (client_id != from_id && client_data.first != -1) {
-                  std::ostringstream out;
-                  out << "2\n" << from_id << " " << payload;
-                  send_message(out.str(), client_data.first);
+              {
+                std::lock_guard<std::mutex> clients_lock(clients_mutex);
+                for (const auto& [client_id, client_data] : clients) {
+                  if (client_id != from_id && client_data.first != -1) {
+                    std::ostringstream out;
+                    out << "2\n" << from_id << " " << payload;
+                    send_message(out.str(), client_data.first);
+                  }
                 }
               }
             } break;
@@ -801,10 +807,12 @@ int main() {
 
             } break;
             case 6: {
-              std::lock_guard<std::mutex> lock(game_mutex);
               unsigned int x = (unsigned int)std::stoi(payload);
+              
+              std::scoped_lock locks(game_mutex, clients_mutex);
+              
               game.players[from_id].color = uint_to_color(x);
-              std::lock_guard<std::mutex> clients_lock(clients_mutex);
+              
               for (const auto& [client_id, client_data] : clients) {
                 if (client_id != from_id && client_data.first != -1) {
                   send_message(std::string("6\n")
@@ -816,8 +824,9 @@ int main() {
               }
             } break;
             case 10: {
-              std::lock_guard<std::mutex> lock(game_mutex);
               float rot = std::stof(payload);
+              
+              std::scoped_lock locks(game_mutex, clients_mutex);
 
               float angleRad = (-game.players[from_id].rot + 5) * DEG2RAD;
               float bspeed = 10;
@@ -831,7 +840,7 @@ int main() {
               Vector2 spawnPos = Vector2Add(origin, spawnOffset);
               game.bullets.push_back(
                   Bullet((int)spawnPos.x, (int)spawnPos.y, dir, from_id));
-              std::lock_guard<std::mutex> clients_lock(clients_mutex);
+              
               std::ostringstream j;
               j << "10\n"
                 << from_id << ' ' << (int)spawnPos.x << ' ' << (int)spawnPos.y

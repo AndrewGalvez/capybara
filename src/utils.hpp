@@ -170,7 +170,7 @@ T random_enum_element(T first, T last) {
 }
 
 void DrawTextureAlpha(Texture2D texture, int x, int y, unsigned char alpha) {
-  Color tint = (Color){255, 255, 255, alpha};
+  Color tint = Color{255, 255, 255, alpha};
   DrawTexture(texture, x, y, tint);
 }
 
