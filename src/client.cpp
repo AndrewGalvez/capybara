@@ -75,7 +75,7 @@ void do_recv() {
 
       if (!packet.empty()) {
         std::lock_guard<std::mutex> lock(packets_mutex);
-        packets.push_back(packet);
+    packets.push_back(packet);
       }
     }
   }
@@ -388,9 +388,9 @@ void do_username_prompt(std::string *usernameprompt, bool *usernamechosen,
 
   if (IsKeyPressed(KEY_ENTER) && !(*usernameprompt).empty() && my_id != -1) {
     if (acceptable_username(*usernameprompt)) {
-      *usernamechosen = true;
-      game_conf->username = *usernameprompt;
-      game_conf->colorindex = *mycolor;
+    *usernamechosen = true;
+    game_conf->username = *usernameprompt;
+    game_conf->colorindex = *mycolor;
       my_true_color = options[*mycolor];
 
       std::cout << "Client: Selected color index: " << *mycolor << std::endl;
@@ -571,8 +571,8 @@ void draw_ui(Color my_ui_color, playermap players,
           DrawRectangle(window_size.x - 100 + p.x / (PLAYING_AREA.width / 100),
                         p.y / (PLAYING_AREA.height / 100), 10, 10, my_ui_color);
         } else if (!color_equal(p.color, INVISIBLE)) {
-          DrawRectangle(window_size.x - 100 + p.x / (PLAYING_AREA.width / 100),
-                        p.y / (PLAYING_AREA.height / 100), 10, 10, p.color);
+    DrawRectangle(window_size.x - 100 + p.x / (PLAYING_AREA.width / 100),
+                  p.y / (PLAYING_AREA.height / 100), 10, 10, p.color);
         }
       }
     } else {
@@ -597,12 +597,12 @@ void draw_ui(Color my_ui_color, playermap players,
         DrawRectangle(window_size.x - 100 + p.x / (PLAYING_AREA.width / 100),
                       p.y / (PLAYING_AREA.height / 100), 10, 10, p.color);
       }
-    }
+  }
 
-    for (Bullet b : bullets)
-      DrawCircle(window_size.x - 100 + b.x / (PLAYING_AREA.width / 100),
-                 b.y / (PLAYING_AREA.height / 100),
-                 b.r / (PLAYING_AREA.width / 100), BLACK);
+  for (Bullet b : bullets)
+    DrawCircle(window_size.x - 100 + b.x / (PLAYING_AREA.width / 100),
+               b.y / (PLAYING_AREA.height / 100),
+               b.r / (PLAYING_AREA.width / 100), BLACK);
   }
 
   EndUiDrawing();
@@ -615,19 +615,19 @@ void draw_players(playermap players, ResourceManager *res_man, int my_id) {
       continue;
       
     if (!color_equal(p.color, INVISIBLE) || id == my_id) {
-      Color clr = p.color;
+    Color clr = p.color;
       if (id == my_id && is_assassin) {
         DrawTextureAlpha(res_man->load_player_texture_from_color(my_true_color), p.x, p.y, 128);
       } else if (id == my_id && color_equal(p.color, INVISIBLE)) {
         // draw with transparency using the original color
         DrawTextureAlpha(res_man->load_player_texture_from_color(my_true_color), p.x, p.y, 128);
       } else {
-        DrawTexture(res_man->load_player_texture_from_color(clr), p.x, p.y, WHITE);
+    DrawTexture(res_man->load_player_texture_from_color(clr), p.x, p.y, WHITE);
       }
 
-      DrawText(p.username.c_str(),
-               p.x + 50 - MeasureText(p.username.c_str(), 32) / 2, p.y - 50, 32,
-               BLACK);
+    DrawText(p.username.c_str(),
+             p.x + 50 - MeasureText(p.username.c_str(), 32) / 2, p.y - 50, 32,
+             BLACK);
     }
 
     // weapon drawing based on weapon_id
@@ -686,8 +686,8 @@ void draw_players(playermap players, ResourceManager *res_man, int my_id) {
           }
         } else {
           // gun/barrel/thing
-          DrawRectanglePro({(float)p.x + 50, (float)p.y + 50, 50, 20},
-                           {(float)100, (float)0}, p.rot, BLACK);
+    DrawRectanglePro({(float)p.x + 50, (float)p.y + 50, 50, 20},
+                     {(float)100, (float)0}, p.rot, BLACK);
         }
         break;
       }
@@ -721,6 +721,28 @@ bool move_wpn(float *rot, int cx, int cy, Camera2D cam, float scale,
   float oldrot = *rot;
   *rot = fmod(angle + 360.0f, 360.0f);
 
+  return *rot == oldrot;
+}
+
+bool move_flashlight(float *rot, int cx, int cy, Camera2D cam, float scale,
+                     float offsetX, float offsetY) {
+  // mouse position in window
+  Vector2 windowMouse = GetMousePosition();
+
+  // mouse position in render texture
+  Vector2 renderMouse = {(windowMouse.x - offsetX) / scale,
+                         (windowMouse.y - offsetY) / scale};
+
+  // mouse position in world space
+  Vector2 mousePos = GetScreenToWorld2D(renderMouse, cam);
+  Vector2 playerCenter = {(float)cx + 50, (float)cy + 50};
+  
+  // Calculate direction from player to mouse (opposite of weapon calculation)
+  Vector2 delta = Vector2Subtract(playerCenter, mousePos);
+  float angle = atan2f(delta.y, delta.x) * RAD2DEG;
+  float oldrot = *rot;
+  // Adjust angle for square flashlight (no offset needed like rectangular gun)
+  *rot = fmod(angle + 360.0f, 360.0f);
   return *rot == oldrot;
 }
 
@@ -904,7 +926,7 @@ int main(int argc, char **argv) {
       moved_gun = move_wpn(&game.players[my_id].rot, cx, cy, cam, scale,
                               offsetX, offsetY);
     } else if (game.players[my_id].weapon_id == Weapon::flashlight) {
-      moved_gun = move_wpn(&game.players[my_id].rot, cx, cy, cam, scale,
+      moved_gun = move_flashlight(&game.players[my_id].rot, cx, cy, cam, scale,
                               offsetX, offsetY);
     }
     hasmoved = moved || moved_gun;
@@ -1007,8 +1029,7 @@ int main(int argc, char **argv) {
           cam
         );
 
-        // Draw ambient light around player if it's local player
-        if (id == my_id) {
+        if (id == my_id || p.weapon_id == Weapon::flashlight) {
           DrawTexture(lightTex, 
                      playerScreenPos.x - lightTex.width / 2, 
                      playerScreenPos.y - lightTex.height / 2, 
