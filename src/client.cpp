@@ -967,23 +967,22 @@ int main(int argc, char **argv) {
           sock);
     }
 
-    // detect scrolling
+    // detect weapon switching with keyboard keys
     {
       const int MAX_WEAPON_ID = 1;
-
-      float scroll = GetMouseWheelMove();
-      bool scroll_changed = false;
+      
+      bool weapon_changed = false;
       int currentWeapon = game.players[my_id].weapon_id;
-
-      if (scroll > 0) {
-        currentWeapon = (currentWeapon + 1) % (MAX_WEAPON_ID + 1);
-        scroll_changed = true;
-      } else if (scroll < 0) {
-        currentWeapon = (currentWeapon - 1 + (MAX_WEAPON_ID + 1)) % (MAX_WEAPON_ID + 1);
-        scroll_changed = true;
+      
+      if (IsKeyPressed(KEY_ONE)) {
+        currentWeapon = (int)Weapon::gun_or_knife; 
+        weapon_changed = true;
+      } else if (IsKeyPressed(KEY_TWO)) {
+        currentWeapon = (int)Weapon::flashlight; 
+        weapon_changed = true;
       }
-
-      if (scroll_changed) {
+      
+      if (weapon_changed && currentWeapon != game.players[my_id].weapon_id) {
         game.players[my_id].weapon_id = currentWeapon;
         std::ostringstream msg;
         msg << "12\n" << my_id << " " << currentWeapon;
