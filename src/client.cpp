@@ -64,10 +64,10 @@ static bool assassin_nearby = false;
 static bool darkness_active = false;
 static Vector2 darkness_offset = {0, 0};
 static std::chrono::steady_clock::time_point last_darkness_update;
-static float light_weakness = 0.3f; // Controls how far light penetrates darkness (0.0 = no penetration, 1.0 = full penetration)
+static float light_weakness = 0.3f; 
 
 // flashlight battery
-static std::chrono::steady_clock::time_point flashlight_start;
+static float flashlight_time_left = 15.0f;  // 15 seconds of battery
 static bool flashlight_usable = true;
 
 void do_recv() {
@@ -1025,20 +1025,22 @@ int main(int argc, char **argv) {
 
     // flashlight battery
     {
-      if (game.players[my_id].weapon_id == Weapon::flashlight) {
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - flashlight_start).count();
+      if (game.players[my_id].weapon_id == Weapon::flashlight && flashlight_usable) {
+        float deltaTime = GetFrameTime();
+        flashlight_time_left -= deltaTime;
 
-        if (elapsed >= 15) {
+        if (flashlight_time_left <= 0.0f) {
+          flashlight_time_left = 0.0f;
           flashlight_usable = false;
           switch_weapon(Weapon::gun_or_knife, &game, my_id, sock, flashlight_usable);
+          std::cout << "Flashlight battery depleted!" << std::endl;
         }
       }
       
       // check charger coil 
       if (!flashlight_usable && check_charging_station_collision(game.players[my_id].x, game.players[my_id].y)) {
         flashlight_usable = true;
-        flashlight_start = std::chrono::steady_clock::now();  // Reset timer only when recharged
+        flashlight_time_left = 15.0f;  // Reset to full battery
         std::cout << "Flashlight recharged at charging station!" << std::endl;
       }
     }
