@@ -25,6 +25,22 @@
 #include <chrono>
 #include <random>
 
+// Charging station constants and definitions
+const int CHARGE_SIZE = 64;
+const int CHARGE_OFFSET = 32;
+const int PLAYER_SIZE = 50;
+
+struct ChargingPoint {
+  int x, y;
+};
+
+ChargingPoint charging_points[4] = {
+  {CHARGE_OFFSET, (int)(PLAYING_AREA.height / 2) - CHARGE_OFFSET},
+  {(int)PLAYING_AREA.width - CHARGE_OFFSET - CHARGE_SIZE, (int)(PLAYING_AREA.height / 2) - CHARGE_OFFSET},
+  {(int)(PLAYING_AREA.width / 2) - CHARGE_OFFSET, CHARGE_OFFSET},
+  {(int)(PLAYING_AREA.width / 2) - CHARGE_OFFSET, (int)PLAYING_AREA.height - CHARGE_OFFSET - CHARGE_SIZE} 
+};
+
 // Remove global socket declaration - will be created in main()
 int sock = -1; // Will be initialized in main()
 
@@ -49,6 +65,10 @@ static bool darkness_active = false;
 static Vector2 darkness_offset = {0, 0};
 static std::chrono::steady_clock::time_point last_darkness_update;
 static float light_weakness = 0.3f; // Controls how far light penetrates darkness (0.0 = no penetration, 1.0 = full penetration)
+
+// flashlight battery
+static std::chrono::steady_clock::time_point flashlight_start;
+static bool flashlight_usable = true;
 
 void do_recv() {
   char buffer[1024];
@@ -297,6 +317,7 @@ void handle_packet(int packet_type, std::string payload, Game *game,
     if (player_id != *my_id) {
       game->players[player_id].weapon_id = weapon_id;
     }
+    break;
   }
   }
 }
@@ -563,19 +584,28 @@ void draw_ui(Color my_ui_color, playermap players,
   // minimap
   DrawRectangle(window_size.x - 100, 0, 100, 100, GRAY);
 
+  // Draw charging stations on minimap (always visible)
+  Color light_yellow = {255, 255, 200, 255};
+  for (int i = 0; i < 4; i++) {
+    float map_x = window_size.x - 100 + ((charging_points[i].x + CHARGE_SIZE/2) / (PLAYING_AREA.width / 100));
+    float map_y = (charging_points[i].y + CHARGE_SIZE/2) / (PLAYING_AREA.height / 100);
+    DrawCircle(map_x, map_y, 3, light_yellow);
+  }
+
   if (darkness_active) {
     if (is_assassin) {
-      // assassin sees everyone normally during darkness
+      // Assassins see everyone normally during darkness
       for (auto &[id, p] : players) {
         if (id == my_id) {
           DrawRectangle(window_size.x - 100 + p.x / (PLAYING_AREA.width / 100),
                         p.y / (PLAYING_AREA.height / 100), 10, 10, my_ui_color);
         } else if (!color_equal(p.color, INVISIBLE)) {
-    DrawRectangle(window_size.x - 100 + p.x / (PLAYING_AREA.width / 100),
-                  p.y / (PLAYING_AREA.height / 100), 10, 10, p.color);
+          DrawRectangle(window_size.x - 100 + p.x / (PLAYING_AREA.width / 100),
+                        p.y / (PLAYING_AREA.height / 100), 10, 10, p.color);
         }
       }
     } else {
+      // Non-assassins only see themselves with randomized position
       if (players.count(my_id)) {
         Player& local_player = players[my_id];
         float map_x = window_size.x - 100 + (local_player.x / (PLAYING_AREA.width / 100)) + darkness_offset.x;
@@ -597,12 +627,7 @@ void draw_ui(Color my_ui_color, playermap players,
         DrawRectangle(window_size.x - 100 + p.x / (PLAYING_AREA.width / 100),
                       p.y / (PLAYING_AREA.height / 100), 10, 10, p.color);
       }
-  }
-
-  for (Bullet b : bullets)
-    DrawCircle(window_size.x - 100 + b.x / (PLAYING_AREA.width / 100),
-               b.y / (PLAYING_AREA.height / 100),
-               b.r / (PLAYING_AREA.width / 100), BLACK);
+    }
   }
 
   EndUiDrawing();
@@ -764,6 +789,18 @@ void move_camera(Camera2D *cam, int cx, int cy) {
     cam->target.y = PLAYING_AREA.height - viewHeight / 2;
 }
 
+bool check_charging_station_collision(int player_x, int player_y) {
+  for (int i = 0; i < 4; i++) {
+    if (player_x < charging_points[i].x + CHARGE_SIZE && 
+        player_x + PLAYER_SIZE > charging_points[i].x &&
+        player_y < charging_points[i].y + CHARGE_SIZE && 
+        player_y + PLAYER_SIZE > charging_points[i].y) {
+      return true;
+    }
+  }
+  return false;
+}
+
 int init_sock() {
   #if defined(_WIN32)
     if (initialize_winsock() != 0) {
@@ -789,6 +826,25 @@ std::string get_ip_from_args(int argc, char **argv) {
   }
 
   return std::string("127.0.0.1");
+}
+
+bool switch_weapon(Weapon weapon, Game* game, int my_id, int sock, bool flashlight_usable) {
+  if (weapon == Weapon::flashlight && !flashlight_usable) {
+    std::cout << "Flashlight is not usable (battery depleted)" << std::endl;
+    return false;
+  }
+  
+  if (game->players[my_id].weapon_id == (int)weapon) {
+    return false;
+  }
+  
+  game->players[my_id].weapon_id = (int)weapon;
+  
+  std::ostringstream msg;
+  msg << "12\n" << my_id << " " << (int)weapon;
+  send_message(msg.str(), sock);
+  
+  return true;
 }
 
 int main(int argc, char **argv) {
@@ -967,26 +1023,43 @@ int main(int argc, char **argv) {
           sock);
     }
 
+    // flashlight battery
+    {
+      if (game.players[my_id].weapon_id == Weapon::flashlight) {
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - flashlight_start).count();
+
+        if (elapsed >= 15) {
+          flashlight_usable = false;
+          switch_weapon(Weapon::gun_or_knife, &game, my_id, sock, flashlight_usable);
+        }
+      }
+      
+      // check charger coil 
+      if (!flashlight_usable && check_charging_station_collision(game.players[my_id].x, game.players[my_id].y)) {
+        flashlight_usable = true;
+        flashlight_start = std::chrono::steady_clock::now();  // Reset timer only when recharged
+        std::cout << "Flashlight recharged at charging station!" << std::endl;
+      }
+    }
+
     // detect weapon switching with keyboard keys
     {
       const int MAX_WEAPON_ID = 1;
       
       bool weapon_changed = false;
-      int currentWeapon = game.players[my_id].weapon_id;
+      Weapon currentWeapon = (Weapon)game.players[my_id].weapon_id;
       
       if (IsKeyPressed(KEY_ONE)) {
-        currentWeapon = (int)Weapon::gun_or_knife; 
+        currentWeapon = Weapon::gun_or_knife; 
         weapon_changed = true;
-      } else if (IsKeyPressed(KEY_TWO)) {
-        currentWeapon = (int)Weapon::flashlight; 
+      } else if (IsKeyPressed(KEY_TWO) && flashlight_usable) {
+        currentWeapon = Weapon::flashlight; 
         weapon_changed = true;
       }
       
       if (weapon_changed && currentWeapon != game.players[my_id].weapon_id) {
-        game.players[my_id].weapon_id = currentWeapon;
-        std::ostringstream msg;
-        msg << "12\n" << my_id << " " << currentWeapon;
-        send_message(msg.str(), sock);
+        switch_weapon(currentWeapon, &game, my_id, sock, flashlight_usable);
       }
     }
 
@@ -1003,6 +1076,16 @@ int main(int argc, char **argv) {
                          cam))
           DrawTexture(res_man.getTex("assets/floor_tile.png"), i * TILE_SIZE,
                       j * TILE_SIZE, WHITE);
+      }
+    }
+
+    // Draw charging stations
+    for (int i = 0; i < 4; i++) {
+      if (isInViewport(charging_points[i].x, charging_points[i].y, CHARGE_SIZE, CHARGE_SIZE, cam)) {
+        DrawTexturePro(res_man.getTex("assets/charger.png"),
+                       {0, 0, 16, 16}, 
+                       {(float)charging_points[i].x, (float)charging_points[i].y, (float)CHARGE_SIZE, (float)CHARGE_SIZE}, 
+                       {0, 0}, 0.0f, WHITE);
       }
     }
 
@@ -1137,6 +1220,14 @@ int main(int argc, char **argv) {
     // minimap
     DrawRectangle(window_size.x - 100, 0, 100, 100, GRAY);
 
+    // Draw charging stations on minimap (always visible)
+    Color light_yellow = {255, 255, 200, 255};
+    for (int i = 0; i < 4; i++) {
+      float map_x = window_size.x - 100 + ((charging_points[i].x + CHARGE_SIZE/2) / (PLAYING_AREA.width / 100));
+      float map_y = (charging_points[i].y + CHARGE_SIZE/2) / (PLAYING_AREA.height / 100);
+      DrawCircle(map_x, map_y, 3, light_yellow);
+    }
+
     if (darkness_active) {
       if (is_assassin) {
         // Assassins see everyone normally during darkness
@@ -1173,11 +1264,6 @@ int main(int argc, char **argv) {
                         p.y / (PLAYING_AREA.height / 100), 10, 10, p.color);
         }
       }
-
-      for (Bullet b : game.bullets)
-        DrawCircle(window_size.x - 100 + b.x / (PLAYING_AREA.width / 100),
-                   b.y / (PLAYING_AREA.height / 100),
-                   b.r / (PLAYING_AREA.width / 100), BLACK);
     }
 
     EndUiDrawing();

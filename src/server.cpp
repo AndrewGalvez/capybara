@@ -4,6 +4,7 @@
 #include "networking.hpp"
 #include "player.hpp"
 #include "utils.hpp"
+#include <array>
 #include <cstdio>
 #include <iostream>
 #include <cstdlib>
