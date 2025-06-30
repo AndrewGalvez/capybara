@@ -88,7 +88,7 @@ const int BARREL_SIZE = 50;
 const int BARREL_COLLISION_SIZE = BARREL_SIZE * 2;
 static Rectangle umbrella_barrel = {
     (PLAYING_AREA.width / 2) -
-        (BARREL_COLLISION_SIZE / 2), // Center the larger collision box
+        (BARREL_COLLISION_SIZE / 2),
     (PLAYING_AREA.height / 2) - (BARREL_COLLISION_SIZE / 2),
     BARREL_COLLISION_SIZE,
     BARREL_COLLISION_SIZE}; // middle of the playing field
@@ -187,7 +187,7 @@ void handle_packet(int packet_type, std::string payload, Game *game,
       float rot = data["rot"].as_float();
 
       if (id == *my_id)
-        break; // so the movement feels smoother
+        break; 
 
       if ((*game).players.find(id) != (*game).players.end()) {
         if (color_equal((*game).players.at(id).color, INVISIBLE) &&
@@ -537,11 +537,11 @@ void update_darkness_effect() {
                      .count();
 
   if (elapsed >= 1) {
-    // Generate random offset within 25x25 area
+    // random offset within 25x25 area to throw people off
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_int_distribution<> dis(-12,
-                                        12); // -12 to +12 gives us 25x25 area
+                                        12); 
 
     darkness_offset.x = dis(gen);
     darkness_offset.y = dis(gen);
@@ -556,7 +556,7 @@ void draw_flashlight_cone(Vector2 playerScreenPos, float player_rotation) {
 
   // convert rotation to radians
   float angle_rad =
-      (player_rotation - 90.0f) * DEG2RAD; // -90 to align with "up" direction
+      (player_rotation - 90.0f) * DEG2RAD; // -90 to go up
 
   // create flashlight cone using triangles
   Vector2 player_center = {playerScreenPos.x, playerScreenPos.y};
@@ -577,7 +577,7 @@ void draw_flashlight_cone(Vector2 playerScreenPos, float player_rotation) {
 
   // draw the main cone with high intensity (very transparent for strong light)
   unsigned char main_intensity =
-      (unsigned char)(255 * light_weakness * 0.2f); // Very strong light
+      (unsigned char)(255 * light_weakness * 0.2f);
   Color main_cone_color = {255, 255, 255, main_intensity};
 
   // draw center triangle (strongest light)
@@ -679,7 +679,6 @@ void draw_ui(Color my_ui_color, playermap players, std::vector<Bullet> bullets,
 
   if (darkness_active) {
     if (is_assassin) {
-      // Assassins see everyone normally during darkness
       for (auto &[id, p] : players) {
         if (id == my_id) {
           DrawRectangle(window_size.x - 100 + p.x / (PLAYING_AREA.width / 100),
@@ -690,7 +689,6 @@ void draw_ui(Color my_ui_color, playermap players, std::vector<Bullet> bullets,
         }
       }
     } else {
-      // non-assassins see themselves and players with flashlights
       for (auto &[id, p] : players) {
         if (id == my_id || p.weapon_id == Weapon::flashlight) {
           Color display_color = (id == my_id) ? my_ui_color : p.color;
@@ -730,10 +728,8 @@ void draw_ui(Color my_ui_color, playermap players, std::vector<Bullet> bullets,
 void draw_players(playermap players, std::vector<Bullet> bullets,
                   ResourceManager *res_man, int my_id) {
   for (auto &[id, p] : players) {
-    // Only skip unset players and invisible players that aren't the local
-    // player and aren't visible due to range
     if (p.username == "unset")
-      continue;
+      continue; // skip unset players
 
     if (!color_equal(p.color, INVISIBLE) || id == my_id) {
       Color shadow_color = {0, 0, 0, 80};
@@ -747,7 +743,6 @@ void draw_players(playermap players, std::vector<Bullet> bullets,
         DrawTextureAlpha(res_man->load_player_texture_from_color(my_true_color),
                          p.x, p.y, 128);
       } else if (id == my_id && color_equal(p.color, INVISIBLE)) {
-        // draw with transparency using the original color
         DrawTextureAlpha(res_man->load_player_texture_from_color(my_true_color),
                          p.x, p.y, 128);
       } else {
@@ -760,7 +755,7 @@ void draw_players(playermap players, std::vector<Bullet> bullets,
                BLACK);
     }
 
-    // weapon drawing based on weapon_id
+    // weapon drawing based on weapon_id (brain explosion)
     switch (static_cast<Weapon>(p.weapon_id)) {
     case gun_or_knife: {
       if (id == my_id && is_assassin) {
@@ -781,8 +776,7 @@ void draw_players(playermap players, std::vector<Bullet> bullets,
             Vector2 player_center = {(float)p.x + 50, (float)p.y + 50};
             float knife_offset = 80.0f;
 
-            // Calculate alpha based on distance - more transparent when further
-            // away
+            // assassin stealth knife gets more transparent when further away (if not using stealth knife then item is fully visible)
             float alpha_scale = 1.0f - (distance / close_distance);
             unsigned char alpha = (unsigned char)(alpha_scale * 192);
             Color knife_tint = {255, 255, 255, alpha};
@@ -792,7 +786,7 @@ void draw_players(playermap players, std::vector<Bullet> bullets,
                            {player_center.x, player_center.y, 80, 80},
                            {(float)40 + knife_offset, (float)40}, p.rot,
                            knife_tint);
-            // play sound when close
+            // play sound when close (TODO: fix the sound not loading)
             if (!assassin_sound_loaded) {
               assassin_sound = LoadSound("assets/assassin_close.wav");
               assassin_sound_loaded = true;
@@ -833,7 +827,6 @@ void draw_players(playermap players, std::vector<Bullet> bullets,
         player_umbrella.is_active = true;
         player_umbrella.draw(res_man, p.x, p.y);
       } else {
-        // Draw other players' umbrellas with hit detection
         Color umbrella_tint = WHITE;
         for (const Bullet &b : bullets) {
           Rectangle umbrella_rect = {(float)p.x, (float)p.y - 85, 75, 75};
@@ -845,7 +838,6 @@ void draw_players(playermap players, std::vector<Bullet> bullets,
           }
         }
 
-        // Draw other players' umbrellas without state tracking
         DrawTexturePro(res_man->getTex("assets/umbrella.png"),
                        {(float)0, (float)0, 16, 16},
                        {(float)p.x + 50, (float)p.y - 35, 75, 75},
@@ -853,7 +845,7 @@ void draw_players(playermap players, std::vector<Bullet> bullets,
       }
       break;
     default:
-      // Unknown weapon type - no drawing
+      std::cout << "What sorcery do thou bring into this world?" << std::endl;
       break;
     }
   }
@@ -892,11 +884,10 @@ bool move_flashlight(float *rot, int cx, int cy, Camera2D cam, float scale,
   Vector2 mousePos = GetScreenToWorld2D(renderMouse, cam);
   Vector2 playerCenter = {(float)cx + 50, (float)cy + 50};
 
-  // Calculate direction from player to mouse (opposite of weapon calculation)
   Vector2 delta = Vector2Subtract(playerCenter, mousePos);
   float angle = atan2f(delta.y, delta.x) * RAD2DEG;
   float oldrot = *rot;
-  // Adjust angle for square flashlight (no offset needed like rectangular gun)
+
   *rot = fmod(angle + 360.0f, 360.0f);
   return *rot == oldrot;
 }
@@ -1073,7 +1064,6 @@ int main(int argc, char **argv) {
   lightTex = LoadTextureFromImage(lightImg);
   UnloadImage(lightImg);
 
-  // Initialize map objects after resource manager
   init_map_objects(res_man.getTex("assets/barrel.png"),
                    res_man.getTex("assets/charger.png"));
 
@@ -1106,7 +1096,6 @@ int main(int argc, char **argv) {
     // update acid rain
     acid_rain.update(GetFrameTime());
 
-    // Put here to make sure id exists
     int cx = game.players[my_id].x;
     int cy = game.players[my_id].y;
 
@@ -1172,7 +1161,7 @@ int main(int argc, char **argv) {
                         (float)game.players[my_id].y + 50};
       Vector2 spawnPos = Vector2Add(origin, spawnOffset);
 
-      // Send bullet shot message to server - server will assign ID
+      // send shot message to server
       send_message(
           netvent::serialize_to_netvent(
               netvent::val((int)MSG_BULLET_SHOT),
@@ -1334,13 +1323,12 @@ int main(int argc, char **argv) {
 
     EndTextureMode();
 
-    // Apply darkness effect if active and player is not assassin
+    // darkness drawing
     if (darkness_active && !is_assassin) {
-      // Clear and prepare darkness mask each frame
       BeginTextureMode(darknessMask);
       ClearBackground(Color{0, 0, 0, 254});
 
-      // Draw lights for all players
+      // draw lights for all players
       for (auto &[id, p] : game.players) {
         Vector2 playerScreenPos =
             GetWorldToScreen2D(Vector2{(float)p.x + 50, (float)p.y + 50}, cam);
@@ -1350,20 +1338,19 @@ int main(int argc, char **argv) {
                       playerScreenPos.y - lightTex.height / 2, WHITE);
         }
 
-        // Draw flashlight beam if player has flashlight
         if (p.weapon_id == Weapon::flashlight) {
           float angleRad =
               (-p.rot + 5 + 180) *
-              DEG2RAD; // Add 180 degrees to point in the right direction
-          float flashlight_distance = 600.0f; // How far the light reaches
+              DEG2RAD; // for some reason 180 degrees is needed to point in the right direction
+          float flashlight_distance = 600.0f; 
 
-          float spread_angle = 15.0f * DEG2RAD; // Narrower beam
+          float spread_angle = 15.0f * DEG2RAD;
 
           for (int i = 0; i < 4; i++) {
             float current_spread =
                 spread_angle *
-                (1.0f - (float)i / 4.0f); // Narrower spread for inner beams
-            float alpha = 180 - (i * 40); // Brighter in the center
+                (1.0f - (float)i / 4.0f);
+            float alpha = 180 - (i * 40); // brighter in the center
 
             Vector2 beam_left = {
                 playerScreenPos.x +
@@ -1377,12 +1364,11 @@ int main(int argc, char **argv) {
                 playerScreenPos.y -
                     sinf(angleRad + current_spread) * flashlight_distance};
 
-            // Draw layered beams
             Color beam_color = {255, 255, 255, (unsigned char)alpha};
             DrawTriangle(playerScreenPos, beam_left, beam_right, beam_color);
           }
 
-          // Add a small intense light at the source
+          // add a small intense light at the source
           float source_size = 30.0f;
           Color source_color = {255, 255, 255, 200};
           DrawCircle(playerScreenPos.x, playerScreenPos.y, source_size,
@@ -1391,7 +1377,7 @@ int main(int argc, char **argv) {
       }
       EndTextureMode();
 
-      // Apply darkness mask to main render target
+      // render darkness mask to game render texture
       BeginTextureMode(target);
       BeginBlendMode(BLEND_MULTIPLIED);
 
@@ -1405,8 +1391,7 @@ int main(int argc, char **argv) {
       EndTextureMode();
     }
 
-    // show green tint on screen if acid rain is active and player doesn't have
-    // umbrella
+    // green tint on screen if acid rain is active and player doesn't have umbrella
     if (acid_rain.is_active()) {
       BeginTextureMode(target);
       BeginBlendMode(BLEND_ADDITIVE);
@@ -1416,7 +1401,7 @@ int main(int argc, char **argv) {
           player_umbrella.is_active;
       Color tint = has_active_umbrella
                        ? Color{0, 0, 0, 0}
-                       : Color{0, 40, 0, 80}; // Subtle green overlay
+                       : Color{0, 40, 0, 80};
 
       DrawRectangle(0, 0, window_size.x, window_size.y, tint);
 
@@ -1424,7 +1409,6 @@ int main(int argc, char **argv) {
       EndTextureMode();
     }
 
-    // Draw all HUD elements on top (after darkness effect)
     BeginTextureMode(target);
     draw_ui(my_true_color, game.players, game.bullets, my_id, (20 - bdelay),
             cam, scale);

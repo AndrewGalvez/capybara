@@ -1,7 +1,9 @@
 
 # Capybara
 
-A CPP game made using native POSIX sockets.
+A CPP game made using raw sockets.
+
+Oh, you don't like raw sockets? I don't either, I just suck at refactoring.
 
 ## Gameplay
 

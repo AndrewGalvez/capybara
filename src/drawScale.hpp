@@ -92,11 +92,10 @@ inline void DrawTextScaleCentered(const char *text, float x, float y, float size
 }
 
 inline int MeasureTextScale(const char *text, float size) {
-    // Don't apply scaling here since we're measuring for the base 800x600 resolution
-    return MeasureText(text, size);
+    return MeasureText(text, size); // deprecated lol
 }
 
-// These are now just empty functions since we're handling scaling in the draw functions
+// also not used
 inline void BeginUiDrawing() {}
 inline void EndUiDrawing() {}
 #endif // DRAW_SCALE_HPP

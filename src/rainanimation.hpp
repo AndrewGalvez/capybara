@@ -47,12 +47,12 @@ public:
 
         timer += dt;
 
-        // Update existing raindrops
+        // update existing raindrops
         for (auto it = raindrops.begin(); it != raindrops.end();) {
             it->position.y += it->speed * dt;
-            it->alpha = std::max(0.0f, it->alpha - dt * 0.5f); // Fade out over time
+            it->alpha = std::max(0.0f, it->alpha - dt * 0.5f); // fade out over time
             
-            // Remove drops that are off screen or fully faded
+            // remove dissappeared drops
             if (it->position.y > PLAYING_AREA.height || it->alpha <= 0) {
                 it = raindrops.erase(it);
             } else {
@@ -60,7 +60,7 @@ public:
             }
         }
 
-        // add new raindrops
+        // add new drops
         if (raindrops.size() < MAX_DROPS && GetRandomValue(0, 100) < 30) {
             RainDrop drop;
             drop.position.x = GetRandomValue(0, PLAYING_AREA.width);
@@ -90,13 +90,13 @@ public:
                 }
             }
             if (!drop.hidden) {
-                Color dropColor = {0, 255, 0, (unsigned char)(drop.alpha * 255)}; // Green with alpha
+                Color dropColor = {0, 255, 0, (unsigned char)(drop.alpha * 255)}; 
                 DrawCircle(drop.position.x, drop.position.y, drop.size, dropColor);
                 
-                // Draw trail
+                // draw trail
                 float trailLength = drop.speed * 0.05f;
                 Vector2 trailEnd = {drop.position.x, drop.position.y - trailLength};
-                Color trailColor = {0, 255, 0, (unsigned char)(drop.alpha * 128)}; // More transparent trail
+                Color trailColor = {0, 255, 0, (unsigned char)(drop.alpha * 128)}; 
                 DrawLineEx(drop.position, trailEnd, drop.size * 0.5f, trailColor);
             }
         }
@@ -108,7 +108,6 @@ public:
 
 private:
     void triggerEvent() {
-        // Add a burst of raindrops
         for (int i = 0; i < 20; i++) {
             RainDrop drop;
             drop.position.x = GetRandomValue(0, PLAYING_AREA.width);

@@ -14,10 +14,9 @@ struct CanMoveState {
 
 inline CanMoveState update_can_move_state(Rectangle player, std::vector<Object> cubes, const int PLAYER_SIZE = 50, const float move_amount = 1.0f, Rectangle playing_area = {0, 0, 800, 600})
 {
-    // check if when the player moves in a certain direction, they will hit a cube or the edge of the screen
     CanMoveState new_can_move_state = {true, true, true, true};
     
-    // Check cube collisions
+    // cube collisions
     for (auto &cube : cubes) {
         Rectangle cube_correct_bounds = {cube.bounds.x, cube.bounds.y - cube.bounds.height, cube.bounds.width, cube.bounds.height};
         // up
@@ -38,7 +37,7 @@ inline CanMoveState update_can_move_state(Rectangle player, std::vector<Object> 
         }
     }
 
-    // Check boundary collisions - prevent moving outside the playing area
+    // playing area collisions
     if (player.x - move_amount < playing_area.x) {
         new_can_move_state.left = false;
     }
@@ -52,7 +51,7 @@ inline CanMoveState update_can_move_state(Rectangle player, std::vector<Object> 
         new_can_move_state.down = false;
     }
 
-    // if the player is stuck, move them in a random direction
+    // if the player is stuck, unstuck them 
     if (!new_can_move_state.up && !new_can_move_state.down && !new_can_move_state.left && !new_can_move_state.right) {
         new_can_move_state.up = true;
         new_can_move_state.down = true;

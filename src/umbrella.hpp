@@ -41,7 +41,7 @@ class Umbrella {
             if (is_usable) {
                 hit_cooldown -= GetFrameTime();
                 
-                // Fade tint back to white
+                // fade tint back to white
                 if (tint.r < 255) tint.r += 5;
                 if (tint.g < 255) tint.g += 5;
                 if (tint.b < 255) tint.b += 5;
@@ -52,10 +52,9 @@ class Umbrella {
                     const Bullet& bullet = game_bullets[i];
                     
                     if (hit_cooldown <= 0 && CheckCollisionRecs(our_position, bullet_rect)) {
-                        // Only count hit if we haven't been hit by this bullet before
                         if (hit_by_bullets.find(bullet.bullet_id) == hit_by_bullets.end()) {
                             how_many_times_hit++;
-                            hit_cooldown = 0.5f; // 500ms cooldown between hits
+                            hit_cooldown = 0.5f; // cooldown between hits
                             was_hit = true;
                             hit_by_bullets.insert(bullet.bullet_id);
                             std::cout << "Umbrella hit by bullet " << bullet.bullet_id << "! Hits: " << how_many_times_hit << std::endl;

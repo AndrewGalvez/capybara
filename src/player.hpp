@@ -68,16 +68,16 @@ public:
     if (IsKeyDown(KEY_D) && can_move_state.right)
       dir_x += speed;
 
-    // Check boundaries before moving
     int new_x = this->x + dir_x;
     int new_y = this->y + dir_y;
     
+    /* // handled in collision.hpp
     if (new_x >= PLAYING_AREA.x && new_x <= PLAYING_AREA.width - 100) {
       this->x = new_x;
     }
     if (new_y >= PLAYING_AREA.y && new_y <= PLAYING_AREA.height - 100) {
       this->y = new_y;
-    }
+    } */
 
     return out;
   }

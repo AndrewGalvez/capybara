@@ -52,21 +52,20 @@ public:
   }
 
   Texture2D load_player_texture_from_color(Color clr) {
-    // Create a unique key for the color
+    // create a unique key for the color
     std::string color_key = std::to_string(clr.r) + "_" + std::to_string(clr.g) + "_" + 
                            std::to_string(clr.b) + "_" + std::to_string(clr.a);
 
-    // If we already have this color cached, return it
+    // if we already loaded this color, return it
     if (colored_players.find(clr) != colored_players.end()) {
       return colored_players[clr];
     }
 
-    // Create a copy of the monochrome image to modify
+    // create a copy of the monochrome image to modify
     Image colored_image = ImageCopy(player_monochrome);
 
-    // Special handling for orange to make it more vibrant
     Color enhanced_color;
-    if (clr.r > clr.g && clr.g > clr.b) { // Detecting orange-like colors
+    if (clr.r > clr.g && clr.g > clr.b) { // orange must be vibrant
         enhanced_color = {
             (unsigned char)std::min(255, (int)(clr.r * color_multiplier_r)),
             (unsigned char)std::min(255, (int)(clr.g * color_multiplier_g)),
@@ -74,7 +73,7 @@ public:
             clr.a
         };
     } else {
-        // Boost primary colors more aggressively
+        // boost primary colors more aggressively (still isn't working AAAH)
         enhanced_color = {
             (unsigned char)std::min(255, (int)(clr.r * color_multiplier_r)),
             (unsigned char)std::min(255, (int)(clr.g * color_multiplier_g)),
@@ -83,21 +82,18 @@ public:
         };
     }
 
-    // For each pixel in the image
+    // unmonochrome the image
     for (int y = 0; y < colored_image.height; y++) {
       for (int x = 0; x < colored_image.width; x++) {
         Color pixel = GetImageColor(colored_image, x, y);
         
-        // If the pixel is not pure white (255,255,255) or pure black (0,0,0)
         if (!((pixel.r == 255 && pixel.g == 255 && pixel.b == 255) || 
               (pixel.r == 0 && pixel.g == 0 && pixel.b == 0))) {
-          // Calculate grayscale value (assuming the image is already grayscale)
           float gray = (float)pixel.r / 255.0f;
           
-          // More aggressive curve for better contrast
-          float enhanced_gray = powf(gray, 0.6f); // Make mid-tones even brighter
+          float enhanced_gray = powf(gray, 0.6f); // make mid-tones even brighter
 
-          // Enhance saturation
+          // enhance saturation
           Color new_color = {
             (unsigned char)(enhanced_color.r * enhanced_gray),
             (unsigned char)(enhanced_color.g * enhanced_gray),
@@ -110,7 +106,6 @@ public:
       }
     }
 
-    // Convert the modified image to texture
     Texture2D colored_texture = LoadTextureFromImage(colored_image);
     UnloadImage(colored_image);
 
